@@ -100,42 +100,32 @@ class InMemoryService {
     }
     async getAll() { return this.data; }
     getLocalData() { return this.data; }
-    async getMasterData() {
-        return {
-            operators: ["พนักงาน 1", "พนักงาน 2"],
-            machineAssignments: {
-                "Machine_CWM-01": "S1B29288-JR (10A)"
-            }
-        };
-    }
 }
 
 class GoogleSheetService {
     constructor(url, onSyncUpdate) { 
         this.url = url; 
         this.onSyncUpdate = onSyncUpdate;
-        // โหลดข้อมูลที่ยังไม่ได้ส่ง จาก LocalStorage
+        // ดึงคิวที่ค้างส่งจาก LocalStorage (กรณีปิดเว็บไปก่อนส่งเสร็จ)
         this.pendingQueue = JSON.parse(localStorage.getItem('cpk_pending_queue') || '[]');
-        this.cachedData = []; // เก็บข้อมูลทั้งหมดไว้ให้ UI วาดได้เร็วๆ
+        this.cachedData = []; 
         this.isSyncing = false;
     }
 
-    // ฟังก์ชันช่วยบันทึกคิวลง LocalStorage และอัปเดต UI
     _saveQueueToLocal() {
         localStorage.setItem('cpk_pending_queue', JSON.stringify(this.pendingQueue));
         if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
     }
 
     async save(record) {
-        // ลงเวลาให้เรียบร้อยตั้งแต่ตอนกด
         record.timestamp = new Date().toLocaleString('th-TH');
         
-        // เอาเข้าคิว Pending และอัปเดตแคชเพื่อโชว์กราฟทันที (Optimistic UI)
+        // 1. นำข้อมูลเข้าคิวและแคชเพื่อให้กราฟอัปเดตทันที
         this.pendingQueue.push(record);
         this.cachedData.push(record);
         this._saveQueueToLocal();
         
-        // สั่งให้อัปโหลดเบื้องหลัง (ไม่รอกลับมา)
+        // 2. สั่งอัปโหลดไป Google Sheet เบื้องหลัง (ไม่ต้องมี await หน้า fetch อีกต่อไป)
         this.syncBackground();
         
         return { success: true };
@@ -147,26 +137,20 @@ class GoogleSheetService {
             const result = await response.json();
             const serverData = result.data || [];
 
-            // ระบบป้องกันการซ้ำซ้อน: เคลียร์ข้อมูลใน pendingQueue ที่มีอยู่แล้วบนเซิร์ฟเวอร์
+            // ระบบป้องกันข้อมูลซ้ำ: ลบข้อมูลในคิวที่ขึ้นเซิร์ฟเวอร์สำเร็จไปแล้ว
             if (this.pendingQueue.length > 0) {
                 this.pendingQueue = this.pendingQueue.filter(pending => {
-                    // ตรวจสอบว่ามีข้อมูลนี้บันทึกบน Server หรือยัง (เช็ค Machine, Part, Param, Op, Value)
                     const isAlreadyOnServer = serverData.some(server => 
-                        server.machine === pending.machine &&
                         server.part === pending.part &&
                         server.parameter === pending.parameter &&
-                        server.operator === pending.operator &&
                         parseFloat(server.value) === parseFloat(pending.value)
                     );
-                    return !isAlreadyOnServer; // เก็บไว้ในคิวเฉพาะตัวที่ยังไม่มีบนเซิร์ฟ
+                    return !isAlreadyOnServer;
                 });
                 this._saveQueueToLocal();
             }
 
-            // นำข้อมูลบนเซิร์ฟเวอร์ มารวมกับข้อมูลที่ต่อคิวอยู่ เพื่อแสดงผลให้ครบถ้วน
             this.cachedData = [...serverData, ...this.pendingQueue];
-            
-            // สั่งซิงค์ตัวที่ยังตกค้าง
             this.syncBackground();
             
             return this.cachedData;
@@ -175,20 +159,16 @@ class GoogleSheetService {
             return this.cachedData.length > 0 ? this.cachedData : this.pendingQueue;
         }
     }
-
-    // ขอข้อมูลที่อยู่ในเครื่องไปแสดงผลทันทีโดยไม่ต้องรอโหลด
+    
     getLocalData() {
         return this.cachedData;
     }
 
-    // ฟังก์ชันซิงค์ข้อมูลเบื้องหลัง (Background Sync)
     async syncBackground() {
         if (this.isSyncing || this.pendingQueue.length === 0) return;
         this.isSyncing = true;
-
         if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
 
-        // ทยอยส่งข้อมูลในคิวไปเรื่อยๆ จนกว่าจะหมด
         while (this.pendingQueue.length > 0) {
             const recordToSync = this.pendingQueue[0];
             try {
@@ -200,32 +180,17 @@ class GoogleSheetService {
                 const result = await response.json();
                 
                 if (result.success) {
-                    // ส่งสำเร็จ ลบออกจากคิวหน้าสุด
-                    this.pendingQueue.shift();
+                    this.pendingQueue.shift(); // ส่งสำเร็จ ลบออกจากคิว
                     this._saveQueueToLocal();
                 } else {
-                    console.error("Server return error:", result);
-                    break; // หยุดชั่วคราวหากมี Error แจ้งมาจากหลังบ้าน
+                    break; 
                 }
             } catch (error) {
-                console.error("Background sync network error:", error);
-                break; // หยุดชั่วคราวหากเน็ตหลุด
+                break; // เน็ตหลุด ให้หยุดอัปโหลดไว้ก่อนแล้วค่อยส่งใหม่ทีหลัง
             }
         }
-
         this.isSyncing = false;
         if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
-    }
-
-    async getMasterData() {
-        try {
-            const response = await fetch(`${this.url}?action=get_master`);
-            const result = await response.json();
-            return result.data || { operators: [], machineAssignments: {} };
-        } catch (error) {
-            console.error("Error fetching Master Data:", error);
-            return { operators: [], machineAssignments: {} };
-        }
     }
 }
 
@@ -259,20 +224,16 @@ class DashboardUI {
         this.elements.statusText.className = `${colorClass} font-semibold`;
     }
 
-    // อัปเดต UI เมื่อมีรายการค้างอัปโหลด
     updateSyncStatus(dbName, pendingCount) {
         if (pendingCount > 0) {
             this.elements.statusText.innerHTML = `${dbName} <span class="text-yellow-300 ml-2 animate-pulse">⏳ รออัปโหลด: ${pendingCount}</span>`;
-            this.elements.statusText.className = `text-green-400 font-semibold flex items-center`;
         } else {
             this.elements.statusText.innerText = dbName;
-            this.elements.statusText.className = `text-green-400 font-semibold`;
         }
     }
 
     setLoadingState(isLoading) {
         this.elements.btnSubmit.disabled = isLoading;
-        // เปลี่ยนคำบนปุ่มให้รู้ว่ากดได้เลย
         this.elements.btnSubmit.innerText = isLoading ? 'กำลังประมวลผล...' : 'บันทึกข้อมูล (Save)';
     }
 
@@ -531,35 +492,19 @@ class AppController {
         this.db = dbService;
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0 };
-        this.machineAssignments = {}; 
     }
 
     async init() {
+        this.ui.initChart();
         this.bindEvents();
         
-        this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
-        this.ui.setLoadingState(true);
+        this.handlePartChange(); 
+        await this.refreshDashboard();
 
-        const masterData = await this.db.getMasterData();
-        this.machineAssignments = masterData.machineAssignments || {};
-        
-        this.ui.populateOperators(masterData.operators || []);
-        this.ui.populateMachines(this.machineAssignments);
-        this.ui.populateParts(PART_SPECS);
-
-        if (Object.keys(this.machineAssignments).length > 0) {
-            this.ui.elements.machineSelect.selectedIndex = 1; 
-            this.handleMachineChange();
-        }
-
-        // โหลดครั้งแรกดึงจากเซิร์ฟเวอร์
-        await this.refreshDashboard(false, false);
-
-        this.ui.setLoadingState(false);
         const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
-        // อัปเดตสถานะ (รวมถึงตัวเลขคิวถ้ามีค้างอยู่)
         const pendingCount = this.db.pendingQueue ? this.db.pendingQueue.length : 0;
         this.ui.updateSyncStatus(dbName, pendingCount);
+        this.ui.setStatus(dbName, "text-green-400 flex items-center"); 
     }
 
     bindEvents() {
@@ -603,46 +548,39 @@ class AppController {
 
         this.ui.updateSpecInfo(spec);
         this.ui.clearInput();
-        
-        // เวลาแค่เปลี่ยนตัวเลือก ให้โหลดจาก Local Cache ก็พอ จะได้ไม่ช้า
-        this.refreshDashboard(false, true);
+        this.refreshDashboard(true); // อนุญาตให้ดึงข้อมูลจากแคชเมื่อเปลี่ยนตัวเลือก
     }
 
     async handleSubmit(e) {
         e.preventDefault();
-
+        
         const record = {
-            machine: this.ui.elements.machineSelect.value,
+            machine: document.getElementById('machine-id').value,
             part: this.ui.elements.partSelect.value,
             parameter: this.ui.elements.paramSelect.value,
             value: this.ui.elements.measuredInput.value,
             operator: document.getElementById('operator').value
         };
 
-        // ส่งให้ DB (จะจัดการเอาเข้าคิวและทำงานต่อเบื้องหลังทันที ไม่ต้องรอเน็ต)
-        await this.db.save(record);
+        // ส่งให้ Service จัดการ (จะเข้าคิวและทำงานเสร็จภายในเสี้ยววินาที)
+        await this.db.save(record); 
         
-        // เคลียร์กล่องและอัปเดตกราฟ "ทันที" จาก Cache ภายใน
         this.ui.clearInput();
-        this.refreshDashboard(true, true);
+        this.refreshDashboard(true); // โหลดกราฟใหม่จาก Local Cache ทันที ไม่ต้องรอเน็ต
     }
 
-    async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
-        // ดึงข้อมูล (ถ้า useLocalCache เป็น true จะดึงจากที่แคชไว้ในเครื่อง ทำให้เร็วมาก)
+    async refreshDashboard(useLocalCache = false) {
         let allRecords;
+        
+        // ถ้าแจ้งให้ใช้ Cache ได้ จะไปดึงข้อมูลในเครื่องมาเลย ไม่รอโหลดจาก Google
         if (useLocalCache && this.db.getLocalData) {
-            allRecords = this.db.getLocalData();
+            allRecords = this.db.getLocalData(); 
         } else {
             allRecords = await this.db.getAll();
         }
-
+        
         const part = this.ui.elements.partSelect.value;
         const param = this.ui.elements.paramSelect.value;
-
-        if(!part || !PART_SPECS[part]) return;
-
-        // ดันข้อมูลลงกราฟทุกตัว
-        this.ui.updateAllCharts(allRecords, part, PART_SPECS[part]);
 
         if(!param) return;
 
@@ -661,9 +599,9 @@ class AppController {
 window.onload = () => {
     const uiService = new DashboardUI();
     
-    // Callback สำหรับรับแจ้งเตือนเวลายอดอัปโหลดเบื้องหลังเปลี่ยน
+    // Callback สำหรับอัปเดตหน้าจอเมื่อมีการส่งข้อมูลเบื้องหลังสำเร็จ
     const syncStatusCallback = (pendingCount) => {
-        const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
+        const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets" : "In-Memory";
         uiService.updateSyncStatus(dbName, pendingCount);
     };
 
