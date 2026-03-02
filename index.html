@@ -4,33 +4,32 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPC Dashboard - Cp/Cpk Management</title>
-    <!-- Tailwind CSS for styling -->
+    
+    <!-- ดึง Tailwind CSS และ Chart.js มาใช้งาน -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js for graphs -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
-        body { font-family: 'Sarabun', sans-serif; }
-    </style>
+    
+    <!-- ลิงก์ไปยังไฟล์ CSS -->
+    <link rel="stylesheet" href="style.css">
 </head>
-<body class="bg-gray-100 text-gray-800 min-h-screen">
+<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col">
 
     <!-- Navigation -->
     <nav class="bg-blue-900 text-white p-4 shadow-md">
         <div class="container mx-auto flex justify-between items-center">
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            SPC & Cp/Cpk Dashboard
-        </h1>
-        <div class="text-sm">สถานะเชื่อมต่อ: <span id="connection-status" class="text-yellow-400 font-semibold">กำลังโหลด...</span></div>
-    </div>
-</nav>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                SPC & Cp/Cpk Dashboard
+            </h1>
+            <div class="text-sm">สถานะเชื่อมต่อ: <span id="connection-status" class="text-yellow-400 font-semibold">กำลังโหลด...</span></div>
+        </div>
+    </nav>
 
-    <main class="container mx-auto p-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <main class="container mx-auto p-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-6 flex-grow">
         
-        <!-- Left Column: Input Form -->
+        <!-- ส่วนกรอกข้อมูล -->
         <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit">
             <h2 class="text-lg font-bold mb-4 text-gray-700 border-b pb-2">บันทึกข้อมูลการวัด (Data Entry)</h2>
             <form id="data-form" class="space-y-4">
@@ -39,20 +38,20 @@
                     <select id="machine-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
                         <option value="Winding-01">Winding Coil MC-01</option>
                         <option value="Winding-02">Winding Coil MC-02</option>
-                        <option value="Winding-02">Winding Coil MC-03</option>
-                        <option value="Winding-02">Winding Coil MC-04</option>
-                        <option value="Winding-02">Winding Coil MC-05</option>
-                        <option value="Winding-02">Winding Coil MC-06</option>
-                        <option value="Winding-02">Winding Coil MC-07</option>
-                        <option value="Winding-02">Winding Coil MC-08</option>
-                        <option value="Winding-02">Winding Coil MC-09</option>
-                        <option value="Winding-02">Winding Coil MC-010</option>
-                        <option value="Winding-02">Winding Coil MC-011</option>
-                        <option value="Winding-02">Winding Coil MC-012</option>
-                        <option value="Winding-02">Winding Coil MC-013</option>
-                        <option value="Winding-02">Winding Coil MC-014</option>
-                        <option value="Winding-02">Winding Coil MC-015</option>
-                        <option value="Winding-02">Winding Coil MC-016</option>
+                        <option value="Winding-03">Winding Coil MC-03</option>
+                        <option value="Winding-04">Winding Coil MC-04</option>
+                        <option value="Winding-05">Winding Coil MC-05</option>
+                        <option value="Winding-06">Winding Coil MC-06</option>
+                        <option value="Winding-07">Winding Coil MC-07</option>
+                        <option value="Winding-08">Winding Coil MC-08</option>
+                        <option value="Winding-09">Winding Coil MC-09</option>
+                        <option value="Winding-10">Winding Coil MC-010</option>
+                        <option value="Winding-11">Winding Coil MC-011</option>
+                        <option value="Winding-12">Winding Coil MC-012</option>
+                        <option value="Winding-13">Winding Coil MC-013</option>
+                        <option value="Winding-14">Winding Coil MC-014</option>
+                        <option value="Winding-15">Winding Coil MC-015</option>
+                        <option value="Winding-16">Winding Coil MC-016</option>
                     </select>
                 </div>
                 <div>
@@ -66,52 +65,47 @@
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">จุดตรวจสอบ (Parameter)</label>
-                    <select id="parameter-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
-                        <!-- ตัวเลือกจะถูกสร้างด้วย JavaScript -->
-                    </select>
+                    <select id="parameter-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"></select>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">ค่าที่วัดได้ (Measured Value)</label>
-                    <input type="number" step="0.001" id="measured-value" placeholder="ระบุตัวเลข..." required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg">
-                    <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100">
-                        <!-- แสดง Spec อัตโนมัติ -->
-                    </p>
+                    <input type="number" step="0.001" id="measured-value" placeholder="ระบุตัวเลข..." required class="w-full p-2 border border-gray-300 rounded-lg text-lg focus:ring-blue-500 focus:border-blue-500">
+                    <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100"></p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">พนักงาน (Operator)</label>
                     <input type="text" id="operator" placeholder="รหัสพนักงาน" required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
                 </div>
-                <button type="submit" id="submit-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
+                <button type="submit" id="submit-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
                     บันทึกข้อมูล (Save)
                 </button>
             </form>
         </div>
 
-        <!-- Right Column: Dashboard & Charts -->
+        <!-- ส่วน Dashboard -->
         <div class="lg:col-span-2 space-y-6">
-            
             <!-- KPI Cards -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center">
-                    <p class="text-sm text-gray-500">จำนวนข้อมูล (n)</p>
+                <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
+                    <p class="text-sm text-gray-500">จำนวน (n)</p>
                     <p id="kpi-count" class="text-2xl font-bold text-gray-800">0</p>
                 </div>
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center">
+                <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
                     <p class="text-sm text-gray-500">ค่าเฉลี่ย (Mean)</p>
                     <p id="kpi-mean" class="text-2xl font-bold text-gray-800">-</p>
                 </div>
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center">
+                <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
                     <p class="text-sm text-gray-500">Cp</p>
                     <p id="kpi-cp" class="text-2xl font-bold text-blue-600">-</p>
                 </div>
-                <div id="kpi-cpk-card" class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center transition-colors">
+                <div id="kpi-cpk-card" class="bg-white p-4 rounded-xl shadow-sm border text-center transition-colors">
                     <p class="text-sm text-gray-500">Cpk</p>
                     <p id="kpi-cpk" class="text-2xl font-bold text-gray-800">-</p>
                 </div>
             </div>
 
-            <!-- Chart -->
-            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+            <!-- กราฟ -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border">
                 <div class="flex justify-between items-center mb-2">
                     <h3 class="text-md font-bold text-gray-700">Trend Chart (Control Chart)</h3>
                     <span id="chart-title" class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded"></span>
@@ -121,8 +115,8 @@
                 </div>
             </div>
 
-            <!-- Data Table -->
-            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+            <!-- ตารางข้อมูล -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border overflow-x-auto">
                 <h3 class="text-md font-bold text-gray-700 mb-2">ข้อมูลล่าสุด (สำหรับพารามิเตอร์ปัจจุบัน)</h3>
                 <table class="min-w-full text-sm text-left text-gray-500">
                     <thead class="text-xs text-gray-700 uppercase bg-gray-50 border-b">
@@ -133,427 +127,13 @@
                             <th class="px-4 py-2">ค่าที่วัดได้</th>
                         </tr>
                     </thead>
-                    <tbody id="data-table-body">
-                        <!-- Data rows will be inserted here -->
-                    </tbody>
+                    <tbody id="data-table-body"></tbody>
                 </table>
             </div>
         </div>
     </main>
 
-    <script>
-        /**
-         * =========================================================================
-         * MODULE 1: CONFIGURATION & MASTER DATA
-         * ส่วนสำหรับจัดการค่าเริ่มต้น และข้อมูล Master Data (สเปคชิ้นงานต่างๆ)
-         * =========================================================================
-         */
-        const AppConfig = {
-            // URL ของ Google Apps Script Web App
-            GOOGLE_SHEET_URL: "https://script.google.com/macros/s/AKfycbyhbkaXcCxNn02BfNgjULoapK5ga3w1zk8IZz_jTYNti9aIipeqzWMSHc8I6Kih_hgy/exec",
-            // สลับเป็น false หากต้องการทดสอบแบบไม่ต้องต่ออินเทอร์เน็ต (In-Memory)
-            USE_GOOGLE_SHEET: true 
-        };
-
-        const PART_SPECS = {
-            "SIB29288-CF": { // 10A
-                "item2": { name: "Item 2: Dimension 24.5 +/- 1.0", target: 24.5, lsl: 23.5, usl: 25.5 },
-                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
-                "item4": { name: "Item 4: Dimension 8.10 +/- 1.0", target: 8.1, lsl: 7.1, usl: 9.1 },
-                "item5": { name: "Item 5: Dimension 1.07 + 0.20", target: 1.17, lsl: 1.07, usl: 1.27 },
-                "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25", target: 8.2, lsl: 7.95, usl: 8.45 },
-                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
-            },
-            "SIB71819-CF": { // 16A
-                "item2": { name: "Item 2: Dimension 24.5 +/- 1.0", target: 24.5, lsl: 23.5, usl: 25.5 },
-                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
-                "item4": { name: "Item 4: Dimension 8.10 +/- 1.0", target: 8.1, lsl: 7.1, usl: 9.1 },
-                "item5": { name: "Item 5: Dimension 1.35 + 0.20", target: 1.45, lsl: 1.35, usl: 1.55 },
-                "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25", target: 8.2, lsl: 7.95, usl: 8.45 },
-                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
-            },
-            "SIB29292-CF": { // 20A
-                "item2": { name: "Item 2: Dimension 24.5 +/- 1.0", target: 24.5, lsl: 23.5, usl: 25.5 },
-                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
-                "item4": { name: "Item 4: Dimension 8.10 +/- 1.0", target: 8.1, lsl: 7.1, usl: 9.1 },
-                "item5": { name: "Item 5: Dimension 1.65 + 0.20", target: 1.75, lsl: 1.65, usl: 1.85 },
-                "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25", target: 8.2, lsl: 7.95, usl: 8.45 },
-                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
-            },
-            "51207080HC-CF": { // 32A
-                "item2": { name: "Item 2: Dimension 25 +0.5/- 1.0", target: 25.0, lsl: 24.0, usl: 25.5 },
-                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
-                "item4": { name: "Item 4: Dimension 8.60 +/- 1.0", target: 8.6, lsl: 7.6, usl: 9.6 },
-                "item5": { name: "Item 5: Dimension 2.24 +/- 0.08", target: 2.24, lsl: 2.16, usl: 2.32 },
-                "item6": { name: "Item 6: Diameter ø 12.8 +/- 0.25", target: 12.8, lsl: 12.55, usl: 13.05 },
-                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
-            }
-        };
-
-
-        /**
-         * =========================================================================
-         * MODULE 2: UTILITIES (Math & Statistics)
-         * รวมสูตรการคำนวณทางสถิติแยกไว้ต่างหาก เพื่อให้ง่ายต่อการทำ Unit Test
-         * =========================================================================
-         */
-        class StatUtils {
-            static mean(arr) {
-                return arr.reduce((a, b) => a + b, 0) / arr.length;
-            }
-            
-            static stdDev(arr, meanVal) {
-                if (arr.length <= 1) return 0;
-                const variance = arr.reduce((sum, val) => sum + Math.pow(val - meanVal, 2), 0) / (arr.length - 1);
-                return Math.sqrt(variance);
-            }
-            
-            static calculateCapability(dataArray, usl, lsl) {
-                if (dataArray.length < 2) return { cp: "-", cpk: "-", mean: "-" };
-                
-                const mean = this.mean(dataArray);
-                const sigma = this.stdDev(dataArray, mean);
-                
-                if (sigma === 0) return { cp: "-", cpk: "-", mean: mean.toFixed(3) }; 
-
-                let cp = null, cpu = null, cpl = null, cpk = null;
-
-                if (usl !== null && lsl !== null) {
-                    cp = (usl - lsl) / (6 * sigma);
-                    cpu = (usl - mean) / (3 * sigma);
-                    cpl = (mean - lsl) / (3 * sigma);
-                    cpk = Math.min(cpu, cpl);
-                } else if (usl !== null) { // One-sided (Max)
-                    cpu = (usl - mean) / (3 * sigma);
-                    cpk = cpu; 
-                } else if (lsl !== null) { // One-sided (Min)
-                    cpl = (mean - lsl) / (3 * sigma);
-                    cpk = cpl;
-                }
-
-                return {
-                    mean: mean.toFixed(3),
-                    cp: cp !== null ? cp.toFixed(2) : "-",
-                    cpk: cpk !== null ? cpk.toFixed(2) : "-"
-                };
-            }
-        }
-
-
-        /**
-         * =========================================================================
-         * MODULE 3: DATA SERVICES (API Layer)
-         * ทำหน้าที่สื่อสารกับ Database ภายนอก 
-         * =========================================================================
-         */
-        class InMemoryService {
-            constructor() { this.data = []; }
-            async save(record) {
-                record.timestamp = new Date().toLocaleString('th-TH');
-                this.data.push(record);
-                return { success: true };
-            }
-            async getAll() { return this.data; }
-        }
-
-        class GoogleSheetService {
-            constructor(url) { this.url = url; }
-            async save(record) {
-                try {
-                    const response = await fetch(this.url, {
-                        method: 'POST',
-                        body: JSON.stringify({ action: "add", data: record }),
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' }
-                    });
-                    return await response.json();
-                } catch (error) {
-                    console.error("Error saving to Google Sheets:", error);
-                    return { success: false };
-                }
-            }
-            async getAll() {
-                try {
-                    const response = await fetch(`${this.url}?action=get`);
-                    const result = await response.json();
-                    return result.data || [];
-                } catch (error) {
-                    console.error("Error fetching from Google Sheets:", error);
-                    return [];
-                }
-            }
-        }
-
-
-        /**
-         * =========================================================================
-         * MODULE 4: VIEW (UI & DOM Management)
-         * หน้าที่อัปเดตหน้าจอ (DOM) วาดกราฟ และจัดการ Table
-         * =========================================================================
-         */
-        class DashboardUI {
-            constructor() {
-                this.chartInstance = null;
-                // Cache DOM Elements
-                this.elements = {
-                    partSelect: document.getElementById('part-id'),
-                    paramSelect: document.getElementById('parameter-id'),
-                    specDisplay: document.getElementById('spec-display'),
-                    measuredInput: document.getElementById('measured-value'),
-                    chartTitle: document.getElementById('chart-title'),
-                    tbody: document.getElementById('data-table-body'),
-                    btnSubmit: document.getElementById('submit-btn'),
-                    statusText: document.getElementById('connection-status'),
-                    kpiCount: document.getElementById('kpi-count'),
-                    kpiMean: document.getElementById('kpi-mean'),
-                    kpiCp: document.getElementById('kpi-cp'),
-                    kpiCpk: document.getElementById('kpi-cpk'),
-                    kpiCpkCard: document.getElementById('kpi-cpk-card')
-                };
-            }
-
-            setStatus(text, colorClass) {
-                this.elements.statusText.innerText = text;
-                this.elements.statusText.className = `${colorClass} font-semibold`;
-            }
-
-            setLoadingState(isLoading) {
-                this.elements.btnSubmit.disabled = isLoading;
-                this.elements.btnSubmit.innerText = isLoading ? 'กำลังบันทึก...' : 'บันทึกข้อมูล (Save)';
-            }
-
-            clearInput() {
-                this.elements.measuredInput.value = '';
-                this.elements.measuredInput.focus();
-            }
-
-            renderParameterOptions(specsObject) {
-                this.elements.paramSelect.innerHTML = ''; 
-                for (const [key, spec] of Object.entries(specsObject)) {
-                    const option = document.createElement('option');
-                    option.value = key;
-                    option.text = spec.name;
-                    this.elements.paramSelect.appendChild(option);
-                }
-            }
-
-            updateSpecInfo(spec) {
-                const lslText = spec.lsl !== null ? spec.lsl : "ไม่มี (N/A)";
-                this.elements.specDisplay.innerHTML = `สเปค (Spec): <b>${spec.name}</b> <br/> (LSL: ${lslText} / USL: ${spec.usl})`;
-            }
-
-            updateChartTitle(part, specName) {
-                const label = specName.split(':')[0]; // ดึงแค่ Item 2, Item 3 มาแสดง
-                this.elements.chartTitle.innerText = `${part} - ${label}`;
-            }
-
-            initChart(currentConfig) {
-                const ctx = document.getElementById('runChart').getContext('2d');
-                this.chartInstance = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: [],
-                        datasets: [
-                            { label: 'Measured Value', data: [], borderColor: 'rgb(59, 130, 246)', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderWidth: 2, pointRadius: 4, fill: true, tension: 0.1 },
-                            { label: 'USL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1, pointRadius: 0, fill: false },
-                            { label: 'LSL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1, pointRadius: 0, fill: false }
-                        ]
-                    },
-                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-                });
-            }
-
-            renderChart(dataRecords, currentConfig) {
-                const labels = dataRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
-                const values = dataRecords.map(r => parseFloat(r.value));
-                
-                this.chartInstance.data.labels = labels;
-                this.chartInstance.data.datasets[0].data = values;
-                this.chartInstance.data.datasets[1].data = Array(dataRecords.length).fill(currentConfig.usl);
-                
-                if (currentConfig.lsl !== null) {
-                    this.chartInstance.data.datasets[2].data = Array(dataRecords.length).fill(currentConfig.lsl);
-                    const range = currentConfig.usl - currentConfig.lsl;
-                    this.chartInstance.options.scales.y.suggestedMin = currentConfig.lsl - (range * 0.5);
-                    this.chartInstance.options.scales.y.suggestedMax = currentConfig.usl + (range * 0.5);
-                } else {
-                    this.chartInstance.data.datasets[2].data = []; // ซ่อนเส้น LSL
-                    const minData = values.length > 0 ? Math.min(...values) : 0;
-                    this.chartInstance.options.scales.y.suggestedMin = Math.max(minData - 1, 0); 
-                    this.chartInstance.options.scales.y.suggestedMax = currentConfig.usl + (currentConfig.usl * 0.05);
-                }
-                
-                this.chartInstance.update();
-            }
-
-            renderTable(dataRecords, currentConfig) {
-                this.elements.tbody.innerHTML = '';
-                
-                if(dataRecords.length === 0) {
-                    this.elements.tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-4 text-center text-gray-400">ยังไม่มีข้อมูลสำหรับพารามิเตอร์นี้</td></tr>';
-                    return;
-                }
-
-                const recent = [...dataRecords].reverse().slice(0, 10);
-                
-                recent.forEach(r => {
-                    let isOut = false;
-                    if(currentConfig.usl !== null && r.value > currentConfig.usl) isOut = true;
-                    if(currentConfig.lsl !== null && r.value < currentConfig.lsl) isOut = true;
-
-                    const valColor = isOut ? 'text-red-600 font-bold' : 'text-gray-800';
-                    const tr = document.createElement('tr');
-                    tr.className = "border-b hover:bg-gray-50";
-                    tr.innerHTML = `
-                        <td class="px-4 py-2">${r.timestamp}</td>
-                        <td class="px-4 py-2">${r.machine}</td>
-                        <td class="px-4 py-2">${r.operator}</td>
-                        <td class="px-4 py-2 ${valColor}">${parseFloat(r.value).toFixed(3)}</td>
-                    `;
-                    this.elements.tbody.appendChild(tr);
-                });
-            }
-
-            renderKPIs(dataRecords, currentConfig) {
-                const values = dataRecords.map(r => parseFloat(r.value));
-                this.elements.kpiCount.innerText = values.length;
-                
-                if (values.length >= 2) {
-                    const stats = StatUtils.calculateCapability(values, currentConfig.usl, currentConfig.lsl);
-                    this.elements.kpiMean.innerText = stats.mean;
-                    this.elements.kpiCp.innerText = stats.cp;
-                    this.elements.kpiCpk.innerText = stats.cpk;
-
-                    this.elements.kpiCpkCard.className = 'p-4 rounded-xl shadow-sm border text-center transition-colors ';
-                    
-                    if (stats.cpk === "-") {
-                        this.elements.kpiCpkCard.classList.add('bg-gray-50', 'border-gray-200');
-                    } else {
-                        const cpkVal = parseFloat(stats.cpk);
-                        if (cpkVal < 1.0) this.elements.kpiCpkCard.classList.add('bg-red-100', 'border-red-300'); 
-                        else if (cpkVal < 1.33) this.elements.kpiCpkCard.classList.add('bg-yellow-100', 'border-yellow-300'); 
-                        else this.elements.kpiCpkCard.classList.add('bg-green-100', 'border-green-300'); 
-                    }
-                } else {
-                    this.elements.kpiMean.innerText = "-";
-                    this.elements.kpiCp.innerText = "-";
-                    this.elements.kpiCpk.innerText = "-";
-                    this.elements.kpiCpkCard.className = 'bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center transition-colors';
-                }
-            }
-        }
-
-
-        /**
-         * =========================================================================
-         * MODULE 5: CONTROLLER (Application Logic)
-         * ตัวกลางสำหรับเชื่อมต่อ Event จากหน้าจอ (UI) เข้ากับ Database (Service)
-         * =========================================================================
-         */
-        class AppController {
-            constructor(dbService, uiService) {
-                this.db = dbService;
-                this.ui = uiService;
-                this.currentConfig = { target: 0, usl: 0, lsl: 0 };
-            }
-
-            async init() {
-                this.ui.initChart();
-                this.bindEvents();
-                
-                // ตั้งค่าหน้าจอเริ่มต้น
-                this.handlePartChange(); 
-                
-                // ดึงข้อมูลครั้งแรก
-                await this.refreshDashboard();
-
-                // แสดงสถานะการเชื่อมต่อ
-                const dbName = this.db instanceof GoogleSheetService ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
-                this.ui.setStatus(dbName, "text-green-400");
-            }
-
-            bindEvents() {
-                this.ui.elements.partSelect.addEventListener('change', () => this.handlePartChange());
-                this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
-                document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
-            }
-
-            handlePartChange() {
-                const part = this.ui.elements.partSelect.value;
-                const specs = PART_SPECS[part];
-                this.ui.renderParameterOptions(specs);
-                this.handleParamChange(); // เรียกเพื่อโหลด Spec ตัวแรกของ Part ทันที
-            }
-
-            handleParamChange() {
-                const part = this.ui.elements.partSelect.value;
-                const param = this.ui.elements.paramSelect.value;
-                
-                if(!param || !PART_SPECS[part][param]) return;
-
-                const spec = PART_SPECS[part][param];
-                this.currentConfig = { target: spec.target, usl: spec.usl, lsl: spec.lsl };
-
-                this.ui.updateSpecInfo(spec);
-                this.ui.clearInput();
-                this.refreshDashboard();
-            }
-
-            async handleSubmit(e) {
-                e.preventDefault();
-                this.ui.setLoadingState(true);
-
-                const record = {
-                    machine: document.getElementById('machine-id').value,
-                    part: this.ui.elements.partSelect.value,
-                    parameter: this.ui.elements.paramSelect.value,
-                    value: this.ui.elements.measuredInput.value,
-                    operator: document.getElementById('operator').value
-                };
-
-                await this.db.save(record);
-                
-                this.ui.clearInput();
-                this.ui.setLoadingState(false);
-                this.refreshDashboard();
-            }
-
-            async refreshDashboard() {
-                const allRecords = await this.db.getAll();
-                const part = this.ui.elements.partSelect.value;
-                const param = this.ui.elements.paramSelect.value;
-
-                if(!param) return;
-
-                const spec = PART_SPECS[part][param];
-                this.ui.updateChartTitle(part, spec.name);
-
-                // กรองข้อมูลเฉพาะรุ่นและพารามิเตอร์ที่กำลังดูอยู่
-                const filteredRecords = allRecords.filter(r => r.part === part && r.parameter === param);
-                
-                this.ui.renderChart(filteredRecords, this.currentConfig);
-                this.ui.renderTable(filteredRecords, this.currentConfig);
-                this.ui.renderKPIs(filteredRecords, this.currentConfig);
-            }
-        }
-
-        /**
-         * =========================================================================
-         * MODULE 6: BOOTSTRAP / ENTRY POINT
-         * จุดเริ่มต้นการทำงานของแอปพลิเคชันเมื่อโหลดหน้าเว็บเสร็จ
-         * =========================================================================
-         */
-        window.onload = () => {
-            // เลือกว่าจะใช้ Database ตัวไหนอ้างอิงจากตั้งค่าด้านบนสุด
-            const databaseService = AppConfig.USE_GOOGLE_SHEET 
-                ? new GoogleSheetService(AppConfig.GOOGLE_SHEET_URL) 
-                : new InMemoryService();
-            
-            const uiService = new DashboardUI();
-            const app = new AppController(databaseService, uiService);
-            
-            // เริ่มการทำงาน
-            app.init();
-        };
-    </script>
+    <!-- ลิงก์ไปยังไฟล์ JavaScript -->
+    <script src="script.js"></script>
 </body>
 </html>
