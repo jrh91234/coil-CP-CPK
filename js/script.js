@@ -1,3 +1,4 @@
+
 // -----------------------------------------------------
 // 1. CONFIGURATION & MASTER DATA
 // -----------------------------------------------------
@@ -261,7 +262,7 @@ class DashboardUI {
             header.className = 'flex justify-between items-center mb-2 border-b pb-2';
             header.innerHTML = `
                 <h3 class="text-sm font-bold text-gray-700">${spec.name.split(':')[0]}</h3>
-                <span class="text-xs text-gray-500">${spec.name.split(':')[1] || spec.name}</span>
+                <span class="text-xs text-gray-500 truncate ml-2" title="${spec.name.split(':')[1] || spec.name}">${spec.name.split(':')[1] || spec.name}</span>
             `;
             
             // สร้าง Canvas
@@ -275,7 +276,7 @@ class DashboardUI {
             wrapper.appendChild(canvasContainer);
             this.elements.chartsContainer.appendChild(wrapper);
 
-            // วาดกราฟเปล่าทิ้งไว้
+            // วาดกราฟทิ้งไว้
             const ctx = canvas.getContext('2d');
             this.chartInstances[key] = new Chart(ctx, {
                 type: 'line',
@@ -303,49 +304,60 @@ class DashboardUI {
             const chart = this.chartInstances[key];
             if (!chart) continue;
 
-            // กรองข้อมูลเฉพาะพารามิเตอร์ของกราฟนั้นๆ
             const paramRecords = dataRecords.filter(r => r.part === part && r.parameter === key);
+            const displayRecords = paramRecords.slice(-30); // โชว์แค่ 30 ค่าล่าสุด
             
-            // เอาเฉพาะ 30 ค่าล่าสุดมาโชว์ในกราฟเพื่อไม่ให้รกเกินไป
-            const displayRecords = paramRecords.slice(-30);
+            let labels = displayRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
+            let values = displayRecords.map(r => parseFloat(r.value));
+            let uslData = Array(displayRecords.length).fill(spec.usl);
+            let lslData = spec.lsl !== null ? Array(displayRecords.length).fill(spec.lsl) : [];
             
-            const labels = displayRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
-            const values = displayRecords.map(r => parseFloat(r.value));
-            
+            // 🛠 ทริก: ถ้ากราฟว่างหรือมีแค่ 1 จุด ต้องสร้างพิกัดแกน X ปลอมๆ ขึ้นมา 2 อัน
+            // เพื่อขึงเส้น USL และ LSL ให้แสดงผลเป็นแนวยาวขวางเต็มกราฟ
+            if (displayRecords.length === 0) {
+                labels = ['(ว่าง)', '(รอข้อมูล)'];
+                values = [null, null];
+                uslData = [spec.usl, spec.usl];
+                if (spec.lsl !== null) lslData = [spec.lsl, spec.lsl];
+            } else if (displayRecords.length === 1) {
+                labels = ['เริ่มต้น', labels[0]];
+                values = [null, values[0]];
+                uslData = [spec.usl, spec.usl];
+                if (spec.lsl !== null) lslData = [spec.lsl, spec.lsl];
+            }
+
             chart.data.labels = labels;
             chart.data.datasets[0].data = values;
-            chart.data.datasets[1].data = Array(displayRecords.length).fill(spec.usl);
+            chart.data.datasets[1].data = uslData;
+            chart.data.datasets[2].data = lslData;
             
+            // การปรับสเกลแกน Y ให้ครอบคลุม LSL และ USL เสมอ
             if (spec.lsl !== null) {
-                chart.data.datasets[2].data = Array(displayRecords.length).fill(spec.lsl);
                 const range = spec.usl - spec.lsl;
                 chart.options.scales.y.suggestedMin = spec.lsl - (range * 0.3);
                 chart.options.scales.y.suggestedMax = spec.usl + (range * 0.3);
             } else {
-                chart.data.datasets[2].data = []; 
-                const minData = values.length > 0 ? Math.min(...values) : 0;
+                const minData = values.filter(v => v !== null).length > 0 ? Math.min(...values.filter(v => v !== null)) : 0;
                 chart.options.scales.y.suggestedMin = Math.max(minData - 1, 0); 
                 chart.options.scales.y.suggestedMax = spec.usl + (spec.usl * 0.05);
             }
+            
             chart.update();
         }
     }
 
     // เน้นสีและเลื่อนจอไปที่กราฟที่เพิ่งบันทึก (Auto-Scroll)
     highlightChart(paramKey, shouldScroll = false) {
-        // ล้างไฮไลต์เดิมออก
         document.querySelectorAll('[id^="chart-wrapper-"]').forEach(el => {
             el.classList.remove('border-blue-500', 'ring-4', 'ring-blue-200', 'shadow-lg');
             el.classList.add('border', 'shadow-sm');
         });
 
-        // ใส่ไฮไลต์กราฟปัจจุบัน
         const activeWrapper = document.getElementById(`chart-wrapper-${paramKey}`);
         if (activeWrapper) {
             activeWrapper.classList.remove('border', 'shadow-sm');
             activeWrapper.classList.add('border-blue-500', 'ring-4', 'ring-blue-200', 'shadow-lg');
             
-            // เลื่อนจออัตโนมัติเฉพาะตอนที่กด Save (shouldScroll = true)
             if (shouldScroll) {
                 setTimeout(() => {
                     activeWrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -466,7 +478,6 @@ class AppController {
         const specs = PART_SPECS[part];
         
         if(specs) {
-            // สร้างกราฟทั้งหมดของรุ่นชิ้นงานนี้รอก่อนเลย
             this.ui.setupAllCharts(part, specs);
             this.ui.renderParameterOptions(specs);
             this.handleParamChange(); 
@@ -489,7 +500,6 @@ class AppController {
         this.ui.updateSpecInfo(spec);
         this.ui.clearInput();
         
-        // อัปเดตข้อมูลโดย "ไม่" ให้จอเลื่อน (เพราะพนักงานแค่เปลี่ยนตัวเลือก)
         this.refreshDashboard(false);
     }
 
@@ -510,7 +520,6 @@ class AppController {
         this.ui.clearInput();
         this.ui.setLoadingState(false);
         
-        // อัปเดตข้อมูลและ "เลื่อนจออัตโนมัติ" ไปยังกราฟที่เพิ่งบันทึก
         this.refreshDashboard(true);
     }
 
@@ -526,10 +535,9 @@ class AppController {
 
         if(!param) return;
 
-        // ไฮไลต์กราฟปัจจุบัน และเลื่อนจอถ้าสั่งการ
+        // ไฮไลต์กราฟปัจจุบัน
         this.ui.highlightChart(param, shouldScrollToChart);
 
-        // อัปเดต KPI และ Table เฉพาะพารามิเตอร์ที่กำลังทำงานอยู่
         const filteredRecords = allRecords.filter(r => r.part === part && r.parameter === param);
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
