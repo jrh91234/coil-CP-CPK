@@ -19,7 +19,7 @@
         <div class="container mx-auto flex justify-between items-center">
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
                 SPC & Cp/Cpk Dashboard
             </h1>
@@ -30,37 +30,17 @@
     <main class="container mx-auto p-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-6 flex-grow">
         
         <!-- ส่วนกรอกข้อมูล -->
-        <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit">
+        <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit sticky top-4">
             <h2 class="text-lg font-bold mb-4 text-gray-700 border-b pb-2">บันทึกข้อมูลการวัด (Data Entry)</h2>
             <form id="data-form" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">กระบวนการ (Process)</label>
                     <select id="machine-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
-                        <option value="Winding-01">Winding Coil MC-01</option>
-                        <option value="Winding-02">Winding Coil MC-02</option>
-                        <option value="Winding-03">Winding Coil MC-03</option>
-                        <option value="Winding-04">Winding Coil MC-04</option>
-                        <option value="Winding-05">Winding Coil MC-05</option>
-                        <option value="Winding-06">Winding Coil MC-06</option>
-                        <option value="Winding-07">Winding Coil MC-07</option>
-                        <option value="Winding-08">Winding Coil MC-08</option>
-                        <option value="Winding-09">Winding Coil MC-09</option>
-                        <option value="Winding-10">Winding Coil MC-010</option>
-                        <option value="Winding-11">Winding Coil MC-011</option>
-                        <option value="Winding-12">Winding Coil MC-012</option>
-                        <option value="Winding-13">Winding Coil MC-013</option>
-                        <option value="Winding-14">Winding Coil MC-014</option>
-                        <option value="Winding-15">Winding Coil MC-015</option>
-                        <option value="Winding-16">Winding Coil MC-016</option>
                     </select>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">รุ่นชิ้นงาน (Part ID)</label>
                     <select id="part-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
-                        <option value="SIB29288-JR">SIB29288-JR [COIL 10A]</option>
-                        <option value="SIB71819-JR">SIB71819-JR [COIL 16A]</option>
-                        <option value="SIB29292-JR">SIB29292-JR [COIL 20A]</option>
-                        <option value="51207080HC-JR">51207080HC-JR [COIL 32A]</option>
                     </select>
                 </div>
                 <div>
@@ -74,17 +54,40 @@
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">พนักงาน (Operator)</label>
-                    <input type="text" id="operator" placeholder="รหัสพนักงาน" required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    <select id="operator" required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">-- กำลังโหลดรายชื่อ... --</option>
+                    </select>
                 </div>
-                <button type="submit" id="submit-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
+                <button type="submit" id="submit-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors">
                     บันทึกข้อมูล (Save)
                 </button>
             </form>
+            
+            <!-- ตารางข้อมูลย้ายมาอยู่ใต้ฟอร์มบันทึก เพื่อประหยัดพื้นที่ให้กราฟ -->
+            <div class="mt-6 border-t pt-4 overflow-x-auto">
+                <h3 class="text-sm font-bold text-gray-700 mb-2">ประวัติค่าที่วัดได้ (ล่าสุด)</h3>
+                <table class="min-w-full text-xs text-left text-gray-500">
+                    <thead class="text-gray-700 uppercase bg-gray-50 border-b">
+                        <tr>
+                            <th class="px-2 py-2">เวลา</th>
+                            <th class="px-2 py-2">พนักงาน</th>
+                            <th class="px-2 py-2 text-right">ค่าที่วัด</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table-body"></tbody>
+                </table>
+            </div>
         </div>
 
-        <!-- ส่วน Dashboard -->
+        <!-- ส่วน Dashboard Overview -->
         <div class="lg:col-span-2 space-y-6">
-            <!-- KPI Cards -->
+            
+            <div class="flex items-center justify-between border-b pb-2">
+                <h2 class="text-xl font-bold text-gray-800">ภาพรวมคุณภาพ (Quality Overview)</h2>
+                <span id="overview-part-title" class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold"></span>
+            </div>
+
+            <!-- KPI Cards ของพารามิเตอร์ที่ถูกเลือกปัจจุบัน -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
                     <p class="text-sm text-gray-500">จำนวน (n)</p>
@@ -104,32 +107,11 @@
                 </div>
             </div>
 
-            <!-- กราฟ -->
-            <div class="bg-white p-4 rounded-xl shadow-sm border">
-                <div class="flex justify-between items-center mb-2">
-                    <h3 class="text-md font-bold text-gray-700">Trend Chart (Control Chart)</h3>
-                    <span id="chart-title" class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded"></span>
-                </div>
-                <div class="relative h-64 w-full">
-                    <canvas id="runChart"></canvas>
-                </div>
+            <!-- คอนเทนเนอร์สำหรับรองรับ "หลายกราฟ" -->
+            <div id="charts-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- กราฟแต่ละตัวจะถูกสร้างอัตโนมัติด้วย JavaScript ตรงนี้ -->
             </div>
-
-            <!-- ตารางข้อมูล -->
-            <div class="bg-white p-4 rounded-xl shadow-sm border overflow-x-auto">
-                <h3 class="text-md font-bold text-gray-700 mb-2">ข้อมูลล่าสุด (สำหรับพารามิเตอร์ปัจจุบัน)</h3>
-                <table class="min-w-full text-sm text-left text-gray-500">
-                    <thead class="text-xs text-gray-700 uppercase bg-gray-50 border-b">
-                        <tr>
-                            <th class="px-4 py-2">เวลา (Time)</th>
-                            <th class="px-4 py-2">เครื่องจักร</th>
-                            <th class="px-4 py-2">พนักงาน</th>
-                            <th class="px-4 py-2">ค่าที่วัดได้</th>
-                        </tr>
-                    </thead>
-                    <tbody id="data-table-body"></tbody>
-                </table>
-            </div>
+            
         </div>
     </main>
 
