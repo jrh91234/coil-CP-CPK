@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPC Dashboard - Cp/Cpk Management</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for graphs -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Sarabun', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 min-h-screen">
+
+    <!-- Navigation -->
+    <nav class="bg-blue-900 text-white p-4 shadow-md">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                SPC & Cp/Cpk Dashboard
+            </h1>
+            <div class="text-sm">สถานะเชื่อมต่อ: <span id="connection-status" class="text-green-400 font-semibold">In-Memory (ทดสอบ)</span></div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto p-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- Left Column: Input Form -->
+        <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit">
+            <h2 class="text-lg font-bold mb-4 text-gray-700 border-b pb-2">บันทึกข้อมูลการวัด (Data Entry)</h2>
+            <form id="data-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">กระบวนการ (Process)</label>
+                    <select id="machine-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                        <option value="Winding-01">Winding Coil MC-01</option>
+                        <option value="Winding-02">Winding Coil MC-02</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">รุ่นชิ้นงาน (Part ID)</label>
+                    <select id="part-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                        <option value="SIB29288-CF">SIB29288-CF [COIL 10A]</option>
+                        <option value="SIB71819-CF">SIB71819-CF [COIL 16A]</option>
+                        <option value="SIB29292-CF">SIB29292-CF [COIL 20A]</option>
+                        <option value="51207080HC-CF">51207080HC-CF [COIL 32A]</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">จุดตรวจสอบ (Parameter)</label>
+                    <!-- ดึงข้อมูลอ้างอิงจาก JavaScript อัตโนมัติ -->
+                    <select id="parameter-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">ค่าที่วัดได้ (Measured Value)</label>
+                    <input type="number" step="0.001" id="measured-value" placeholder="ระบุตัวเลข..." required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg">
+                    <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100">
+                        <!-- อัปเดตผ่าน JS -->
+                    </p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">พนักงาน (Operator)</label>
+                    <input type="text" id="operator" placeholder="รหัสพนักงาน" required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
+                    บันทึกข้อมูล (Save)
+                </button>
+            </form>
+        </div>
+
+        <!-- Right Column: Dashboard & Charts -->
+        <div class="lg:col-span-2 space-y-6">
+            
+            <!-- KPI Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center">
+                    <p class="text-sm text-gray-500">จำนวนข้อมูล (n)</p>
+                    <p id="kpi-count" class="text-2xl font-bold text-gray-800">0</p>
+                </div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center">
+                    <p class="text-sm text-gray-500">ค่าเฉลี่ย (Mean)</p>
+                    <p id="kpi-mean" class="text-2xl font-bold text-gray-800">-</p>
+                </div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center">
+                    <p class="text-sm text-gray-500">Cp</p>
+                    <p id="kpi-cp" class="text-2xl font-bold text-blue-600">-</p>
+                </div>
+                <div id="kpi-cpk-card" class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center transition-colors">
+                    <p class="text-sm text-gray-500">Cpk</p>
+                    <p id="kpi-cpk" class="text-2xl font-bold text-gray-800">-</p>
+                </div>
+            </div>
+
+            <!-- Chart -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-md font-bold text-gray-700">Trend Chart (Control Chart)</h3>
+                    <span id="chart-title" class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded"></span>
+                </div>
+                <div class="relative h-64 w-full">
+                    <canvas id="runChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+                <h3 class="text-md font-bold text-gray-700 mb-2">ข้อมูลล่าสุด (สำหรับพารามิเตอร์ปัจจุบัน)</h3>
+                <table class="min-w-full text-sm text-left text-gray-500">
+                    <thead class="text-xs text-gray-700 uppercase bg-gray-50 border-b">
+                        <tr>
+                            <th class="px-4 py-2">เวลา (Time)</th>
+                            <th class="px-4 py-2">เครื่องจักร</th>
+                            <th class="px-4 py-2">พนักงาน</th>
+                            <th class="px-4 py-2">ค่าที่วัดได้</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table-body">
+                        <!-- Data rows will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        /**
+         * ==========================================
+         * 1. MASTER DATA & CONFIGURATION (ตั้งค่าระบบ)
+         * ==========================================
+         * ข้อมูลอ้างอิงจากไฟล์ Inspection Standard โดยตรง (ละเอียดครอบคลุม Item 2 - 7)
+         */
+        const PART_SPECS = {
+            "SIB29288-CF": { // 10A
+                "item2": { name: "Item 2: Dimension 24.5 +/- 1.0", target: 24.5, lsl: 23.5, usl: 25.5 },
+                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
+                "item4": { name: "Item 4: Dimension 8.10 +/- 1.0", target: 8.1, lsl: 7.1, usl: 9.1 },
+                "item5": { name: "Item 5: Dimension 1.07 + 0.20", target: 1.17, lsl: 1.07, usl: 1.27 },
+                "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25", target: 8.2, lsl: 7.95, usl: 8.45 },
+                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
+            },
+            "SIB71819-CF": { // 16A
+                "item2": { name: "Item 2: Dimension 24.5 +/- 1.0", target: 24.5, lsl: 23.5, usl: 25.5 },
+                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
+                "item4": { name: "Item 4: Dimension 8.10 +/- 1.0", target: 8.1, lsl: 7.1, usl: 9.1 },
+                "item5": { name: "Item 5: Dimension 1.35 + 0.20", target: 1.45, lsl: 1.35, usl: 1.55 },
+                "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25", target: 8.2, lsl: 7.95, usl: 8.45 },
+                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
+            },
+            "SIB29292-CF": { // 20A
+                "item2": { name: "Item 2: Dimension 24.5 +/- 1.0", target: 24.5, lsl: 23.5, usl: 25.5 },
+                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
+                "item4": { name: "Item 4: Dimension 8.10 +/- 1.0", target: 8.1, lsl: 7.1, usl: 9.1 },
+                "item5": { name: "Item 5: Dimension 1.65 + 0.20", target: 1.75, lsl: 1.65, usl: 1.85 },
+                "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25", target: 8.2, lsl: 7.95, usl: 8.45 },
+                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
+            },
+            "51207080HC-CF": { // 32A
+                "item2": { name: "Item 2: Dimension 25 +0.5/- 1.0", target: 25.0, lsl: 24.0, usl: 25.5 },
+                "item3": { name: "Item 3: Dimension 5.9 +/- 0.4", target: 5.9, lsl: 5.5, usl: 6.3 },
+                "item4": { name: "Item 4: Dimension 8.60 +/- 1.0", target: 8.6, lsl: 7.6, usl: 9.6 },
+                "item5": { name: "Item 5: Dimension 2.24 +/- 0.08", target: 2.24, lsl: 2.16, usl: 2.32 },
+                "item6": { name: "Item 6: Diameter ø 12.8 +/- 0.25", target: 12.8, lsl: 12.55, usl: 13.05 },
+                "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
+            }
+        };
+
+        let CURRENT_CONFIG = { target: 24.5, usl: 25.5, lsl: 23.5 };
+
+        /**
+         * ==========================================
+         * 2. MATH & STATISTICAL UTILITIES 
+         * ==========================================
+         */
+        const StatUtils = {
+            mean: (arr) => arr.reduce((a, b) => a + b, 0) / arr.length,
+            
+            stdDev: (arr, meanVal) => {
+                if (arr.length <= 1) return 0;
+                const variance = arr.reduce((sum, val) => sum + Math.pow(val - meanVal, 2), 0) / (arr.length - 1);
+                return Math.sqrt(variance);
+            },
+            
+            calculateCapability: (dataArray, usl, lsl) => {
+                if (dataArray.length < 2) return { cp: "-", cpk: "-", mean: "-" };
+                
+                const mean = StatUtils.mean(dataArray);
+                const sigma = StatUtils.stdDev(dataArray, mean);
+                
+                if (sigma === 0) return { cp: "-", cpk: "-", mean: mean.toFixed(3) }; 
+
+                let cp = null, cpu = null, cpl = null, cpk = null;
+
+                // ตรวจสอบเงื่อนไข Spec ว่ามีทั้ง บน-ล่าง หรือมีด้านเดียว (เช่น Item 7)
+                if (usl !== null && lsl !== null) {
+                    cp = (usl - lsl) / (6 * sigma);
+                    cpu = (usl - mean) / (3 * sigma);
+                    cpl = (mean - lsl) / (3 * sigma);
+                    cpk = Math.min(cpu, cpl);
+                } else if (usl !== null) { // กรณีมีแค่ขีดจำกัดบน (Max)
+                    cpu = (usl - mean) / (3 * sigma);
+                    cpk = cpu; 
+                } else if (lsl !== null) { // กรณีมีแค่ขีดจำกัดล่าง (Min)
+                    cpl = (mean - lsl) / (3 * sigma);
+                    cpk = cpl;
+                }
+
+                return {
+                    mean: mean.toFixed(3),
+                    cp: cp !== null ? cp.toFixed(2) : "-",
+                    cpk: cpk !== null ? cpk.toFixed(2) : "-"
+                };
+            }
+        };
+
+        /**
+         * ==========================================
+         * 3. DATA SERVICES
+         * ==========================================
+         */
+        class InMemoryService {
+            constructor() { this.data = []; }
+            async save(record) {
+                record.timestamp = new Date().toLocaleString('th-TH');
+                this.data.push(record);
+                return { success: true };
+            }
+            async getAll() { return this.data; }
+        }
+        const db = new InMemoryService(); 
+
+        /**
+         * ==========================================
+         * 4. UI & DOM MANAGEMENT
+         * ==========================================
+         */
+        let chartInstance = null;
+
+        function initChart() {
+            const ctx = document.getElementById('runChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Measured Value',
+                            data: [],
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            fill: true,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'USL',
+                            data: [],
+                            borderColor: 'rgb(239, 68, 68)',
+                            borderDash: [5, 5],
+                            borderWidth: 1,
+                            pointRadius: 0,
+                            fill: false
+                        },
+                        {
+                            label: 'LSL',
+                            data: [],
+                            borderColor: 'rgb(239, 68, 68)',
+                            borderDash: [5, 5],
+                            borderWidth: 1,
+                            pointRadius: 0,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom' } }
+                }
+            });
+        }
+
+        function updateChart(dataRecords) {
+            const labels = dataRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
+            const values = dataRecords.map(r => parseFloat(r.value));
+            const uslArray = Array(dataRecords.length).fill(CURRENT_CONFIG.usl);
+            
+            chartInstance.data.labels = labels;
+            chartInstance.data.datasets[0].data = values;
+            chartInstance.data.datasets[1].data = uslArray;
+            
+            // ตรวจสอบว่ามี LSL หรือไม่ (เผื่อกรณี One-sided Spec)
+            if (CURRENT_CONFIG.lsl !== null) {
+                const lslArray = Array(dataRecords.length).fill(CURRENT_CONFIG.lsl);
+                chartInstance.data.datasets[2].data = lslArray;
+                
+                const range = CURRENT_CONFIG.usl - CURRENT_CONFIG.lsl;
+                chartInstance.options.scales.y.suggestedMin = CURRENT_CONFIG.lsl - (range * 0.5);
+                chartInstance.options.scales.y.suggestedMax = CURRENT_CONFIG.usl + (range * 0.5);
+            } else {
+                chartInstance.data.datasets[2].data = []; // ซ่อนเส้น LSL
+                const minData = values.length > 0 ? Math.min(...values) : 0;
+                chartInstance.options.scales.y.suggestedMin = Math.max(minData - 1, 0); 
+                chartInstance.options.scales.y.suggestedMax = CURRENT_CONFIG.usl + (CURRENT_CONFIG.usl * 0.05);
+            }
+            
+            chartInstance.update();
+        }
+
+        function updateTable(dataRecords) {
+            const tbody = document.getElementById('data-table-body');
+            tbody.innerHTML = '';
+            
+            if(dataRecords.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-4 text-center text-gray-400">ยังไม่มีข้อมูลสำหรับพารามิเตอร์นี้</td></tr>';
+                return;
+            }
+
+            const recent = [...dataRecords].reverse().slice(0, 10);
+            
+            recent.forEach(r => {
+                let isOut = false;
+                if(CURRENT_CONFIG.usl !== null && r.value > CURRENT_CONFIG.usl) isOut = true;
+                if(CURRENT_CONFIG.lsl !== null && r.value < CURRENT_CONFIG.lsl) isOut = true;
+
+                const valColor = isOut ? 'text-red-600 font-bold' : 'text-gray-800';
+                
+                const tr = document.createElement('tr');
+                tr.className = "border-b hover:bg-gray-50";
+                tr.innerHTML = `
+                    <td class="px-4 py-2">${r.timestamp}</td>
+                    <td class="px-4 py-2">${r.machine}</td>
+                    <td class="px-4 py-2">${r.operator}</td>
+                    <td class="px-4 py-2 ${valColor}">${parseFloat(r.value).toFixed(3)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateKPIs(dataRecords) {
+            const values = dataRecords.map(r => parseFloat(r.value));
+            document.getElementById('kpi-count').innerText = values.length;
+            const cpkCard = document.getElementById('kpi-cpk-card');
+            
+            if (values.length >= 2) {
+                const stats = StatUtils.calculateCapability(values, CURRENT_CONFIG.usl, CURRENT_CONFIG.lsl);
+                document.getElementById('kpi-mean').innerText = stats.mean;
+                document.getElementById('kpi-cp').innerText = stats.cp;
+                document.getElementById('kpi-cpk').innerText = stats.cpk;
+
+                cpkCard.className = 'p-4 rounded-xl shadow-sm border text-center transition-colors ';
+                
+                if (stats.cpk === "-") {
+                    cpkCard.classList.add('bg-gray-50', 'border-gray-200');
+                } else {
+                    const cpkVal = parseFloat(stats.cpk);
+                    if (cpkVal < 1.0) {
+                        cpkCard.classList.add('bg-red-100', 'border-red-300'); 
+                    } else if (cpkVal < 1.33) {
+                        cpkCard.classList.add('bg-yellow-100', 'border-yellow-300'); 
+                    } else {
+                        cpkCard.classList.add('bg-green-100', 'border-green-300'); 
+                    }
+                }
+            } else {
+                document.getElementById('kpi-mean').innerText = "-";
+                document.getElementById('kpi-cp').innerText = "-";
+                document.getElementById('kpi-cpk').innerText = "-";
+                cpkCard.className = 'bg-white p-4 rounded-xl shadow-sm border border-gray-200 text-center transition-colors';
+            }
+        }
+
+        async function refreshDashboard() {
+            const allRecords = await db.getAll();
+            const currentPart = document.getElementById('part-id').value;
+            const currentParam = document.getElementById('parameter-id').value;
+
+            if(!currentParam) return; // Prevent render if dropdowns are not fully loaded
+
+            const specLabel = PART_SPECS[currentPart][currentParam].name.split(':')[0];
+            document.getElementById('chart-title').innerText = `${currentPart} - ${specLabel}`;
+
+            const filteredRecords = allRecords.filter(r => r.part === currentPart && r.parameter === currentParam);
+            
+            updateChart(filteredRecords);
+            updateTable(filteredRecords);
+            updateKPIs(filteredRecords);
+        }
+
+        /**
+         * ==========================================
+         * 5. DYNAMIC DROPDOWNS & EVENT LISTENERS
+         * ==========================================
+         */
+
+        // สร้างรายการพารามิเตอร์อัตโนมัติตามรุ่นชิ้นงานที่เลือก
+        function renderParameterDropdown() {
+            const part = document.getElementById('part-id').value;
+            const paramSelect = document.getElementById('parameter-id');
+            paramSelect.innerHTML = ''; 
+
+            const specs = PART_SPECS[part];
+            for (const [key, spec] of Object.entries(specs)) {
+                const option = document.createElement('option');
+                option.value = key;
+                option.text = spec.name;
+                paramSelect.appendChild(option);
+            }
+            updateSpecConfig(); 
+        }
+
+        // อัปเดตการตั้งค่าสเปคหลังจากเลือกพารามิเตอร์
+        function updateSpecConfig() {
+            const part = document.getElementById('part-id').value;
+            const param = document.getElementById('parameter-id').value;
+            
+            if(!param || !PART_SPECS[part][param]) return;
+
+            const spec = PART_SPECS[part][param];
+
+            CURRENT_CONFIG.target = spec.target;
+            CURRENT_CONFIG.usl = spec.usl;
+            CURRENT_CONFIG.lsl = spec.lsl;
+
+            const lslText = spec.lsl !== null ? spec.lsl : "ไม่มี (N/A)";
+            document.getElementById('spec-display').innerHTML = `สเปค (Spec): <b>${spec.name}</b> <br/> (LSL: ${lslText} / USL: ${spec.usl})`;
+            
+            document.getElementById('measured-value').value = "";
+            document.getElementById('measured-value').focus();
+
+            refreshDashboard();
+        }
+
+        // เชื่อม Event Listener
+        document.getElementById('part-id').addEventListener('change', renderParameterDropdown);
+        document.getElementById('parameter-id').addEventListener('change', updateSpecConfig);
+
+        document.getElementById('data-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const record = {
+                machine: document.getElementById('machine-id').value,
+                part: document.getElementById('part-id').value,
+                parameter: document.getElementById('parameter-id').value,
+                value: document.getElementById('measured-value').value,
+                operator: document.getElementById('operator').value
+            };
+
+            const btn = e.target.querySelector('button');
+            const originalText = btn.innerText;
+            btn.innerText = 'กำลังบันทึก...';
+            btn.disabled = true;
+
+            await db.save(record);
+            
+            document.getElementById('measured-value').value = '';
+            document.getElementById('measured-value').focus();
+            
+            btn.innerText = originalText;
+            btn.disabled = false;
+
+            refreshDashboard();
+        });
+
+        // Initialize ระบบตอนเปิดหน้า
+        window.onload = () => {
+            initChart();
+            renderParameterDropdown(); // โหลด Dropdown เริ่มต้น (จะ trigger โหลดข้อมูลกราฟต่อด้วย)
+            
+            // ข้อมูลจำลองสำหรับ SIB29288-CF (10A) -> Item 2 (เผื่อไว้ทดสอบระบบ)
+            if (db instanceof InMemoryService) {
+                const mockData = [24.1, 24.5, 24.3, 24.8, 24.2, 24.6, 25.1];
+                mockData.forEach(val => {
+                    db.save({ machine: "Winding-01", part: "SIB29288-CF", parameter: "item2", value: val, operator: "OP-01" });
+                });
+                refreshDashboard();
+            }
+        };
+    </script>
+</body>
+</html>
