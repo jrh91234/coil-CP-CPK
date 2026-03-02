@@ -2,7 +2,8 @@
 // 1. CONFIGURATION & MASTER DATA
 // -----------------------------------------------------
 const AppConfig = {
-    GOOGLE_SHEET_URL: "https://script.google.com/macros/s/AKfycbyhbkaXcCxNn02BfNgjULoapK5ga3w1zk8IZz_jTYNti9aIipeqzWMSHc8I6Kih_hgy/exec",
+    // ⚠️ นำ Web App URL ที่ได้จากการกด Deploy ใน Apps Script ของคุณมาใส่ตรงนี้
+    GOOGLE_SHEET_URL: "https://script.google.com/macros/s/AKfycbwjG6lo8DGi1bX_jWvCQ1cFZYGXEL8nzkm91_HQi21QqhsWgovG6RFTEF_sDpcW3oor/exec",
     USE_GOOGLE_SHEET: true // เปลี่ยนเป็น false หากต้องการทดสอบแบบ In-Memory โดยไม่ต่อเน็ต
 };
 
