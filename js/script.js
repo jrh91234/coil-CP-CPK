@@ -6,8 +6,9 @@ const AppConfig = {
     USE_GOOGLE_SHEET: true // เปลี่ยนเป็น false หากต้องการทดสอบแบบ In-Memory โดยไม่ต่อเน็ต
 };
 
+// อัปเดตชื่อ Part ให้ตรงกับค่าใน Google Sheet หน้า Config เป๊ะๆ
 const PART_SPECS = {
-    "SIB29288-JR": { // 10A
+    "S1B29288-JR (10A)": { // 10A
         "item2": { name: "Item 2: Dimension 24.5 +/- 1.0 mm", target: 24.5, lsl: 23.5, usl: 25.5 },
         "item3": { name: "Item 3: Dimension 5.9 +/- 0.4 mm", target: 5.9, lsl: 5.5, usl: 6.3 },
         "item4": { name: "Item 4: Dimension 8.10 +/- 1.0 mm", target: 8.1, lsl: 7.1, usl: 9.1 },
@@ -15,7 +16,7 @@ const PART_SPECS = {
         "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25 mm", target: 8.2, lsl: 7.95, usl: 8.45 },
         "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
     },
-    "SIB71819-JR": { // 16A
+    "S1B71819-JR (16A)": { // 16A
         "item2": { name: "Item 2: Dimension 24.5 +/- 1.0 mm", target: 24.5, lsl: 23.5, usl: 25.5 },
         "item3": { name: "Item 3: Dimension 5.9 +/- 0.4 mm", target: 5.9, lsl: 5.5, usl: 6.3 },
         "item4": { name: "Item 4: Dimension 8.10 +/- 1.0 mm", target: 8.1, lsl: 7.1, usl: 9.1 },
@@ -23,7 +24,7 @@ const PART_SPECS = {
         "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25 mm", target: 8.2, lsl: 7.95, usl: 8.45 },
         "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
     },
-    "SIB29292-JR": { // 20A
+    "S1B29292-JR (20A)": { // 20A
         "item2": { name: "Item 2: Dimension 24.5 +/- 1.0 mm", target: 24.5, lsl: 23.5, usl: 25.5 },
         "item3": { name: "Item 3: Dimension 5.9 +/- 0.4 mm", target: 5.9, lsl: 5.5, usl: 6.3 },
         "item4": { name: "Item 4: Dimension 8.10 +/- 1.0 mm", target: 8.1, lsl: 7.1, usl: 9.1 },
@@ -31,7 +32,7 @@ const PART_SPECS = {
         "item6": { name: "Item 6: Diameter ø 8.2 +/- 0.25 mm", target: 8.2, lsl: 7.95, usl: 8.45 },
         "item7": { name: "Item 7: ความยาวรวม Max 31.00", target: 31.0, lsl: null, usl: 31.0 }
     },
-    "51207080HC-JR": { // 32A
+    "51207080HC-JR (25/32A)": { // 32A
         "item2": { name: "Item 2: Dimension 25 +0.5/- 1.0 mm", target: 25.0, lsl: 24.0, usl: 25.5 },
         "item3": { name: "Item 3: Dimension 5.9 +/- 0.4 mm", target: 5.9, lsl: 5.5, usl: 6.3 },
         "item4": { name: "Item 4: Dimension 8.60 +/- 1.0 mm", target: 8.6, lsl: 7.6, usl: 9.6 },
@@ -70,10 +71,10 @@ class StatUtils {
             cpu = (usl - mean) / (3 * sigma);
             cpl = (mean - lsl) / (3 * sigma);
             cpk = Math.min(cpu, cpl);
-        } else if (usl !== null) { // One-sided (Max)
+        } else if (usl !== null) { 
             cpu = (usl - mean) / (3 * sigma);
             cpk = cpu; 
-        } else if (lsl !== null) { // One-sided (Min)
+        } else if (lsl !== null) { 
             cpl = (mean - lsl) / (3 * sigma);
             cpk = cpl;
         }
@@ -98,13 +99,10 @@ class InMemoryService {
     }
     async getAll() { return this.data; }
     async getMasterData() {
-        // ข้อมูลจำลองสำหรับทดสอบ (In-Memory)
         return {
-            operators: ["OP-001 (สมชาย)", "OP-002 (สมศรี)", "OP-003 (สมศักดิ์)"],
+            operators: ["พนักงาน 1", "พนักงาน 2"],
             machineAssignments: {
-                "Winding-01": "SIB29288-CF",
-                "Winding-02": "SIB71819-CF",
-                "Winding-03": "51207080HC-CF"
+                "Machine_CWM-01": "S1B29288-JR (10A)"
             }
         };
     }
@@ -186,10 +184,9 @@ class DashboardUI {
         this.elements.measuredInput.focus();
     }
 
+    // สร้างตัวเลือกพนักงานจาก Google Sheet
     populateOperators(operators) {
         let opSelect = document.getElementById('operator');
-        
-        // แปลง Input เป็น Select อัตโนมัติ (กรณีหน้า HTML ยังเป็น Input แบบเก่าอยู่)
         if (opSelect.tagName === 'INPUT') {
             const select = document.createElement('select');
             select.id = 'operator';
@@ -206,6 +203,34 @@ class DashboardUI {
             option.text = op;
             opSelect.appendChild(option);
         });
+    }
+
+    // สร้างตัวเลือกเครื่องจักรจาก Google Sheet
+    populateMachines(machineAssignments) {
+        const mSelect = this.elements.machineSelect;
+        mSelect.innerHTML = '<option value="">-- เลือกเครื่องจักร --</option>';
+        
+        // เรียงชื่อเครื่องจักรตามตัวอักษร
+        const machines = Object.keys(machineAssignments).sort();
+        
+        machines.forEach(machine => {
+            const option = document.createElement('option');
+            option.value = machine;
+            option.text = machine;
+            mSelect.appendChild(option);
+        });
+    }
+
+    // สร้างตัวเลือกรุ่นชิ้นงานจาก PART_SPECS
+    populateParts(partSpecs) {
+        const pSelect = this.elements.partSelect;
+        pSelect.innerHTML = '<option value="">-- เลือกรุ่นชิ้นงาน --</option>';
+        for (const part in partSpecs) {
+            const option = document.createElement('option');
+            option.value = part;
+            option.text = part;
+            pSelect.appendChild(option);
+        }
     }
 
     renderParameterOptions(specsObject) {
@@ -258,7 +283,7 @@ class DashboardUI {
             this.chartInstance.options.scales.y.suggestedMin = currentConfig.lsl - (range * 0.5);
             this.chartInstance.options.scales.y.suggestedMax = currentConfig.usl + (range * 0.5);
         } else {
-            this.chartInstance.data.datasets[2].data = []; // ซ่อนเส้น LSL
+            this.chartInstance.data.datasets[2].data = []; 
             const minData = values.length > 0 ? Math.min(...values) : 0;
             this.chartInstance.options.scales.y.suggestedMin = Math.max(minData - 1, 0); 
             this.chartInstance.options.scales.y.suggestedMax = currentConfig.usl + (currentConfig.usl * 0.05);
@@ -332,7 +357,7 @@ class AppController {
         this.db = dbService;
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0 };
-        this.machineAssignments = {}; // ตัวแปรเก็บ Mapping ระหว่าง เครื่องจักร -> รุ่น
+        this.machineAssignments = {}; 
     }
 
     async init() {
@@ -342,13 +367,20 @@ class AppController {
         this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
         this.ui.setLoadingState(true);
 
-        // 1. ดึง Master Data (พนักงานและจับคู่รุ่นเครื่องจักร) มาก่อน
+        // 1. ดึง Master Data และสร้าง Dropdowns อัตโนมัติ
         const masterData = await this.db.getMasterData();
         this.machineAssignments = masterData.machineAssignments || {};
+        
         this.ui.populateOperators(masterData.operators || []);
+        this.ui.populateMachines(this.machineAssignments);
+        this.ui.populateParts(PART_SPECS);
 
-        // 2. โหลดข้อมูลกราฟ
-        this.handleMachineChange(); // บังคับอัปเดตรุ่นชิ้นงานอัตโนมัติตามเครื่องจักรแรก
+        // 2. หากมีข้อมูล ให้ตั้งค่าเริ่มต้น
+        if (Object.keys(this.machineAssignments).length > 0) {
+            this.ui.elements.machineSelect.selectedIndex = 1; // เลือกเครื่องแรก
+            this.handleMachineChange();
+        }
+
         await this.refreshDashboard();
 
         this.ui.setLoadingState(false);
@@ -357,9 +389,7 @@ class AppController {
     }
 
     bindEvents() {
-        // เมื่อเปลี่ยนเครื่องจักร ให้วิ่งไปตรวจสอบว่าต้อง Auto-select รุ่นไหน
         this.ui.elements.machineSelect.addEventListener('change', () => this.handleMachineChange());
-        
         this.ui.elements.partSelect.addEventListener('change', () => this.handlePartChange());
         this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
@@ -368,11 +398,9 @@ class AppController {
     handleMachineChange() {
         const machine = this.ui.elements.machineSelect.value;
         
-        // ถ้ามีการตั้งค่า Mapping ไว้ ให้เลือก Part อัตโนมัติ
         if (this.machineAssignments[machine]) {
             this.ui.elements.partSelect.value = this.machineAssignments[machine];
         }
-        
         this.handlePartChange();
     }
 
@@ -383,6 +411,9 @@ class AppController {
         if(specs) {
             this.ui.renderParameterOptions(specs);
             this.handleParamChange(); 
+        } else {
+            this.ui.elements.paramSelect.innerHTML = '<option value="">-- กรุณาเลือกรุ่นชิ้นงาน --</option>';
+            this.ui.elements.specDisplay.innerHTML = '';
         }
     }
 
@@ -426,7 +457,7 @@ class AppController {
 
         if(!param) return;
 
-        const spec = PART_SPECS[part][param];
+        const spec = PART_SPECS[part] ? PART_SPECS[part][param] : null;
         if(spec) {
             this.ui.updateChartTitle(part, spec.name);
         }
