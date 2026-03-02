@@ -1,0 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
+
+body { 
+    font-family: 'Sarabun', sans-serif; 
+}
+
+/* เพิ่ม Transition ให้ Card ดูสมูทขึ้น */
+.transition-colors {
+    transition-property: background-color, border-color, color;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 300ms;
+}
