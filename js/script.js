@@ -356,7 +356,6 @@ class DashboardUI {
                 data: {
                     labels: [],
                     datasets: [
-                        // เอา fill: false ออกเพื่อให้เป็นเส้นเปล่าๆ ตามที่ต้องการ
                         { label: 'ค่าที่วัดได้', data: [], borderColor: 'rgb(59, 130, 246)', borderWidth: 2, pointRadius: 3, fill: false, tension: 0.1 },
                         { label: 'USL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0, fill: false },
                         { label: 'LSL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0, fill: false }
@@ -463,7 +462,6 @@ class DashboardUI {
             const valColor = isOut ? 'text-red-600 font-bold' : 'text-gray-800';
             const tr = document.createElement('tr');
             tr.className = "border-b hover:bg-gray-50";
-            // ปรับตารางให้แสดงพอดีกับหน้าจอ
             tr.innerHTML = `
                 <td class="px-2 py-2">${r.timestamp.split(' ')[1] || r.timestamp}</td>
                 <td class="px-2 py-2">${r.machine ? r.machine.split('-')[1] || r.machine : ''}</td>
