@@ -199,7 +199,7 @@ class GoogleSheetService {
         this.isSyncing = false;
         if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
     }
-
+    
     async getMasterData() {
         try {
             const response = await fetch(`${this.url}?action=get_master`);
