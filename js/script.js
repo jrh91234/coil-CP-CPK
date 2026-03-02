@@ -97,6 +97,17 @@ class InMemoryService {
         return { success: true };
     }
     async getAll() { return this.data; }
+    async getMasterData() {
+        // ข้อมูลจำลองสำหรับทดสอบ (In-Memory)
+        return {
+            operators: ["OP-001 (สมชาย)", "OP-002 (สมศรี)", "OP-003 (สมศักดิ์)"],
+            machineAssignments: {
+                "Winding-01": "SIB29288-CF",
+                "Winding-02": "SIB71819-CF",
+                "Winding-03": "51207080HC-CF"
+            }
+        };
+    }
 }
 
 class GoogleSheetService {
@@ -124,6 +135,16 @@ class GoogleSheetService {
             return [];
         }
     }
+    async getMasterData() {
+        try {
+            const response = await fetch(`${this.url}?action=get_master`);
+            const result = await response.json();
+            return result.data || { operators: [], machineAssignments: {} };
+        } catch (error) {
+            console.error("Error fetching Master Data:", error);
+            return { operators: [], machineAssignments: {} };
+        }
+    }
 }
 
 // -----------------------------------------------------
@@ -133,6 +154,7 @@ class DashboardUI {
     constructor() {
         this.chartInstance = null;
         this.elements = {
+            machineSelect: document.getElementById('machine-id'),
             partSelect: document.getElementById('part-id'),
             paramSelect: document.getElementById('parameter-id'),
             specDisplay: document.getElementById('spec-display'),
@@ -156,12 +178,34 @@ class DashboardUI {
 
     setLoadingState(isLoading) {
         this.elements.btnSubmit.disabled = isLoading;
-        this.elements.btnSubmit.innerText = isLoading ? 'กำลังบันทึก...' : 'บันทึกข้อมูล (Save)';
+        this.elements.btnSubmit.innerText = isLoading ? 'กำลังประมวลผล...' : 'บันทึกข้อมูล (Save)';
     }
 
     clearInput() {
         this.elements.measuredInput.value = '';
         this.elements.measuredInput.focus();
+    }
+
+    populateOperators(operators) {
+        let opSelect = document.getElementById('operator');
+        
+        // แปลง Input เป็น Select อัตโนมัติ (กรณีหน้า HTML ยังเป็น Input แบบเก่าอยู่)
+        if (opSelect.tagName === 'INPUT') {
+            const select = document.createElement('select');
+            select.id = 'operator';
+            select.required = true;
+            select.className = opSelect.className;
+            opSelect.parentNode.replaceChild(select, opSelect);
+            opSelect = select;
+        }
+
+        opSelect.innerHTML = '<option value="">-- เลือกพนักงาน --</option>';
+        operators.forEach(op => {
+            const option = document.createElement('option');
+            option.value = op;
+            option.text = op;
+            opSelect.appendChild(option);
+        });
     }
 
     renderParameterOptions(specsObject) {
@@ -288,30 +332,58 @@ class AppController {
         this.db = dbService;
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0 };
+        this.machineAssignments = {}; // ตัวแปรเก็บ Mapping ระหว่าง เครื่องจักร -> รุ่น
     }
 
     async init() {
         this.ui.initChart();
         this.bindEvents();
         
-        this.handlePartChange(); 
+        this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
+        this.ui.setLoadingState(true);
+
+        // 1. ดึง Master Data (พนักงานและจับคู่รุ่นเครื่องจักร) มาก่อน
+        const masterData = await this.db.getMasterData();
+        this.machineAssignments = masterData.machineAssignments || {};
+        this.ui.populateOperators(masterData.operators || []);
+
+        // 2. โหลดข้อมูลกราฟ
+        this.handleMachineChange(); // บังคับอัปเดตรุ่นชิ้นงานอัตโนมัติตามเครื่องจักรแรก
         await this.refreshDashboard();
 
+        this.ui.setLoadingState(false);
         const dbName = this.db instanceof GoogleSheetService ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
         this.ui.setStatus(dbName, "text-green-400");
     }
 
     bindEvents() {
+        // เมื่อเปลี่ยนเครื่องจักร ให้วิ่งไปตรวจสอบว่าต้อง Auto-select รุ่นไหน
+        this.ui.elements.machineSelect.addEventListener('change', () => this.handleMachineChange());
+        
         this.ui.elements.partSelect.addEventListener('change', () => this.handlePartChange());
         this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
     }
 
+    handleMachineChange() {
+        const machine = this.ui.elements.machineSelect.value;
+        
+        // ถ้ามีการตั้งค่า Mapping ไว้ ให้เลือก Part อัตโนมัติ
+        if (this.machineAssignments[machine]) {
+            this.ui.elements.partSelect.value = this.machineAssignments[machine];
+        }
+        
+        this.handlePartChange();
+    }
+
     handlePartChange() {
         const part = this.ui.elements.partSelect.value;
         const specs = PART_SPECS[part];
-        this.ui.renderParameterOptions(specs);
-        this.handleParamChange(); 
+        
+        if(specs) {
+            this.ui.renderParameterOptions(specs);
+            this.handleParamChange(); 
+        }
     }
 
     handleParamChange() {
@@ -333,7 +405,7 @@ class AppController {
         this.ui.setLoadingState(true);
 
         const record = {
-            machine: document.getElementById('machine-id').value,
+            machine: this.ui.elements.machineSelect.value,
             part: this.ui.elements.partSelect.value,
             parameter: this.ui.elements.paramSelect.value,
             value: this.ui.elements.measuredInput.value,
@@ -355,7 +427,9 @@ class AppController {
         if(!param) return;
 
         const spec = PART_SPECS[part][param];
-        this.ui.updateChartTitle(part, spec.name);
+        if(spec) {
+            this.ui.updateChartTitle(part, spec.name);
+        }
 
         const filteredRecords = allRecords.filter(r => r.part === part && r.parameter === param);
         
