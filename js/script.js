@@ -338,7 +338,7 @@ class DashboardUI {
                 data: {
                     labels: [],
                     datasets: [
-                        { label: 'ค่าที่วัดได้', data: [], borderColor: 'rgb(59, 130, 246)', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderWidth: 2, pointRadius: 3, fill: true, tension: 0.1 },
+                        { label: 'ค่าที่วัดได้', data: [], borderColor: 'rgb(59, 130, 246)', borderWidth: 2, pointRadius: 3, fill: false, tension: 0.1 },
                         { label: 'USL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0, fill: false },
                         { label: 'LSL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0, fill: false }
                     ]
@@ -495,16 +495,31 @@ class AppController {
     }
 
     async init() {
-        this.ui.initChart();
         this.bindEvents();
         
-        this.handlePartChange(); 
-        await this.refreshDashboard();
+        this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
+        this.ui.setLoadingState(true);
 
+        const masterData = await this.db.getMasterData();
+        this.machineAssignments = masterData.machineAssignments || {};
+        
+        this.ui.populateOperators(masterData.operators || []);
+        this.ui.populateMachines(this.machineAssignments);
+        this.ui.populateParts(PART_SPECS);
+
+        if (Object.keys(this.machineAssignments).length > 0) {
+            this.ui.elements.machineSelect.selectedIndex = 1; 
+            this.handleMachineChange();
+        }
+
+        // โหลดครั้งแรกดึงจากเซิร์ฟเวอร์
+        await this.refreshDashboard(false, false);
+
+        this.ui.setLoadingState(false);
         const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
+        // อัปเดตสถานะ (รวมถึงตัวเลขคิวถ้ามีค้างอยู่)
         const pendingCount = this.db.pendingQueue ? this.db.pendingQueue.length : 0;
         this.ui.updateSyncStatus(dbName, pendingCount);
-        this.ui.setStatus(dbName, "text-green-400 flex items-center"); 
     }
 
     bindEvents() {
