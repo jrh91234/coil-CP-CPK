@@ -1,4 +1,3 @@
-
 // -----------------------------------------------------
 // 1. CONFIGURATION & MASTER DATA
 // -----------------------------------------------------
@@ -292,7 +291,14 @@ class DashboardUI {
                     responsive: true, 
                     maintainAspectRatio: false, 
                     plugins: { legend: { display: false } },
-                    scales: { x: { ticks: { display: false } } } // ซ่อน Label แกน X เพื่อความคลีน
+                    scales: { 
+                        x: { 
+                            ticks: { 
+                                display: true, // แสดงเส้นแกน X (เวลา)
+                                maxRotation: 45 // เอียงข้อความเวลาเพื่อให้ไม่ซ้อนทับกัน
+                            } 
+                        } 
+                    } 
                 }
             });
         }
