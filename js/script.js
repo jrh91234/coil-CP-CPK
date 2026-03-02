@@ -89,7 +89,7 @@ class StatUtils {
 }
 
 // -----------------------------------------------------
-// 3. DATA SERVICES (API Layer)
+// 3. DATA SERVICES (API Layer & Background Sync)
 // -----------------------------------------------------
 class InMemoryService {
     constructor() { this.data = []; }
@@ -100,6 +100,12 @@ class InMemoryService {
     }
     async getAll() { return this.data; }
     getLocalData() { return this.data; }
+    async getMasterData() {
+        return {
+            operators: ["พนักงาน 1", "พนักงาน 2"],
+            machineAssignments: { "Machine_CWM-01": "S1B29288-JR (10A)" }
+        };
+    }
 }
 
 class GoogleSheetService {
@@ -143,6 +149,7 @@ class GoogleSheetService {
                     const isAlreadyOnServer = serverData.some(server => 
                         server.part === pending.part &&
                         server.parameter === pending.parameter &&
+                        server.operator === pending.operator &&
                         parseFloat(server.value) === parseFloat(pending.value)
                     );
                     return !isAlreadyOnServer;
@@ -160,7 +167,6 @@ class GoogleSheetService {
         }
     }
     
-    // คืนค่าข้อมูลในแคชเพื่ออัปเดต UI ให้เร็วที่สุด
     getLocalData() {
         return this.cachedData;
     }
@@ -193,6 +199,17 @@ class GoogleSheetService {
         this.isSyncing = false;
         if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
     }
+
+    async getMasterData() {
+        try {
+            const response = await fetch(`${this.url}?action=get_master`);
+            const result = await response.json();
+            return result.data || { operators: [], machineAssignments: {} };
+        } catch (error) {
+            console.error("Error fetching Master Data:", error);
+            return { operators: [], machineAssignments: {} };
+        }
+    }
 }
 
 // -----------------------------------------------------
@@ -200,13 +217,15 @@ class GoogleSheetService {
 // -----------------------------------------------------
 class DashboardUI {
     constructor() {
-        this.chartInstance = null;
+        this.chartInstances = {}; // จัดการหลายกราฟพร้อมกัน
         this.elements = {
+            machineSelect: document.getElementById('machine-id'),
             partSelect: document.getElementById('part-id'),
             paramSelect: document.getElementById('parameter-id'),
             specDisplay: document.getElementById('spec-display'),
             measuredInput: document.getElementById('measured-value'),
-            chartTitle: document.getElementById('chart-title'),
+            chartsContainer: document.getElementById('charts-container'), // กล่องใส่กราฟทั้งหมด
+            overviewPartTitle: document.getElementById('overview-part-title'),
             tbody: document.getElementById('data-table-body'),
             btnSubmit: document.getElementById('submit-btn'),
             statusText: document.getElementById('connection-status'),
@@ -223,6 +242,16 @@ class DashboardUI {
         this.elements.statusText.className = `${colorClass} font-semibold`;
     }
 
+    updateSyncStatus(dbName, pendingCount) {
+        if (pendingCount > 0) {
+            this.elements.statusText.innerHTML = `${dbName} <span class="text-yellow-300 ml-2 animate-pulse">⏳ รออัปโหลด: ${pendingCount}</span>`;
+            this.elements.statusText.className = `text-green-400 font-semibold flex items-center`;
+        } else {
+            this.elements.statusText.innerText = dbName;
+            this.elements.statusText.className = `text-green-400 font-semibold`;
+        }
+    }
+
     setLoadingState(isLoading) {
         this.elements.btnSubmit.disabled = isLoading;
         this.elements.btnSubmit.innerText = isLoading ? 'กำลังประมวลผล...' : 'บันทึกข้อมูล (Save)';
@@ -231,6 +260,49 @@ class DashboardUI {
     clearInput() {
         this.elements.measuredInput.value = '';
         this.elements.measuredInput.focus();
+    }
+
+    populateOperators(operators) {
+        let opSelect = document.getElementById('operator');
+        if (opSelect.tagName === 'INPUT') {
+            const select = document.createElement('select');
+            select.id = 'operator';
+            select.required = true;
+            select.className = opSelect.className;
+            opSelect.parentNode.replaceChild(select, opSelect);
+            opSelect = select;
+        }
+
+        opSelect.innerHTML = '<option value="">-- เลือกพนักงาน --</option>';
+        operators.forEach(op => {
+            const option = document.createElement('option');
+            option.value = op;
+            option.text = op;
+            opSelect.appendChild(option);
+        });
+    }
+
+    populateMachines(machineAssignments) {
+        const mSelect = this.elements.machineSelect;
+        mSelect.innerHTML = '<option value="">-- เลือกเครื่องจักร --</option>';
+        const machines = Object.keys(machineAssignments).sort();
+        machines.forEach(machine => {
+            const option = document.createElement('option');
+            option.value = machine;
+            option.text = machine;
+            mSelect.appendChild(option);
+        });
+    }
+
+    populateParts(partSpecs) {
+        const pSelect = this.elements.partSelect;
+        pSelect.innerHTML = '<option value="">-- เลือกรุ่นชิ้นงาน --</option>';
+        for (const part in partSpecs) {
+            const option = document.createElement('option');
+            option.value = part;
+            option.text = part;
+            pSelect.appendChild(option);
+        }
     }
 
     renderParameterOptions(specsObject) {
@@ -248,55 +320,136 @@ class DashboardUI {
         this.elements.specDisplay.innerHTML = `สเปค (Spec): <b>${spec.name}</b> <br/> (LSL: ${lslText} / USL: ${spec.usl})`;
     }
 
-    updateChartTitle(part, specName) {
-        const label = specName.split(':')[0]; 
-        this.elements.chartTitle.innerText = `${part} - ${label}`;
-    }
-
-    initChart() {
-        const ctx = document.getElementById('runChart').getContext('2d');
-        this.chartInstance = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [
-                    { label: 'Measured Value', data: [], borderColor: 'rgb(59, 130, 246)', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderWidth: 2, pointRadius: 4, fill: true, tension: 0.1 },
-                    { label: 'USL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1, pointRadius: 0, fill: false },
-                    { label: 'LSL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1, pointRadius: 0, fill: false }
-                ]
-            },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-        });
-    }
-
-    renderChart(dataRecords, currentConfig) {
-        const labels = dataRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
-        const values = dataRecords.map(r => parseFloat(r.value));
+    // สร้าง DOM ของกราฟทุกตัวอัตโนมัติเมื่อเลือกรุ่นชิ้นงาน
+    setupAllCharts(partName, specsObject) {
+        if(this.elements.overviewPartTitle) this.elements.overviewPartTitle.innerText = partName;
+        if(!this.elements.chartsContainer) return;
         
-        this.chartInstance.data.labels = labels;
-        this.chartInstance.data.datasets[0].data = values;
-        this.chartInstance.data.datasets[1].data = Array(dataRecords.length).fill(currentConfig.usl);
-        
-        if (currentConfig.lsl !== null) {
-            this.chartInstance.data.datasets[2].data = Array(dataRecords.length).fill(currentConfig.lsl);
-            const range = currentConfig.usl - currentConfig.lsl;
-            this.chartInstance.options.scales.y.suggestedMin = currentConfig.lsl - (range * 0.5);
-            this.chartInstance.options.scales.y.suggestedMax = currentConfig.usl + (range * 0.5);
-        } else {
-            this.chartInstance.data.datasets[2].data = []; // ซ่อนเส้น LSL
-            const minData = values.length > 0 ? Math.min(...values) : 0;
-            this.chartInstance.options.scales.y.suggestedMin = Math.max(minData - 1, 0); 
-            this.chartInstance.options.scales.y.suggestedMax = currentConfig.usl + (currentConfig.usl * 0.05);
+        this.elements.chartsContainer.innerHTML = '';
+        this.chartInstances = {};
+
+        for (const [key, spec] of Object.entries(specsObject)) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'bg-white p-4 rounded-xl shadow-sm border transition-all duration-500 ease-in-out';
+            wrapper.id = `chart-wrapper-${key}`;
+
+            const header = document.createElement('div');
+            header.className = 'flex justify-between items-center mb-2 border-b pb-2';
+            header.innerHTML = `
+                <h3 class="text-sm font-bold text-gray-700">${spec.name.split(':')[0]}</h3>
+                <span class="text-xs text-gray-500 truncate ml-2" title="${spec.name.split(':')[1] || spec.name}">${spec.name.split(':')[1] || spec.name}</span>
+            `;
+            
+            const canvasContainer = document.createElement('div');
+            canvasContainer.className = 'relative h-48 w-full';
+            const canvas = document.createElement('canvas');
+            canvas.id = `canvas-${key}`;
+            
+            canvasContainer.appendChild(canvas);
+            wrapper.appendChild(header);
+            wrapper.appendChild(canvasContainer);
+            this.elements.chartsContainer.appendChild(wrapper);
+
+            const ctx = canvas.getContext('2d');
+            this.chartInstances[key] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        // เอา fill: false ออกเพื่อให้เป็นเส้นเปล่าๆ ตามที่ต้องการ
+                        { label: 'ค่าที่วัดได้', data: [], borderColor: 'rgb(59, 130, 246)', borderWidth: 2, pointRadius: 3, fill: false, tension: 0.1 },
+                        { label: 'USL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0, fill: false },
+                        { label: 'LSL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0, fill: false }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    plugins: { legend: { display: false } },
+                    scales: { 
+                        x: { 
+                            ticks: { 
+                                display: true, // แสดงเส้นเวลา
+                                maxRotation: 45
+                            } 
+                        } 
+                    } 
+                }
+            });
         }
-        
-        this.chartInstance.update();
+    }
+
+    // อัปเดตข้อมูลกราฟทุกตัว
+    updateAllCharts(dataRecords, part, specsObject) {
+        for (const [key, spec] of Object.entries(specsObject)) {
+            const chart = this.chartInstances[key];
+            if (!chart) continue;
+
+            const paramRecords = dataRecords.filter(r => r.part === part && r.parameter === key);
+            const displayRecords = paramRecords.slice(-30); 
+            
+            let labels = displayRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
+            let values = displayRecords.map(r => parseFloat(r.value));
+            let uslData = Array(displayRecords.length).fill(spec.usl);
+            let lslData = spec.lsl !== null ? Array(displayRecords.length).fill(spec.lsl) : [];
+            
+            // ขึงเส้นขอบ LSL/USL กรณีไม่มีข้อมูล หรือมีจุดเดียว
+            if (displayRecords.length === 0) {
+                labels = ['(ว่าง)', '(รอข้อมูล)'];
+                values = [null, null];
+                uslData = [spec.usl, spec.usl];
+                if (spec.lsl !== null) lslData = [spec.lsl, spec.lsl];
+            } else if (displayRecords.length === 1) {
+                labels = ['เริ่มต้น', labels[0]];
+                values = [null, values[0]];
+                uslData = [spec.usl, spec.usl];
+                if (spec.lsl !== null) lslData = [spec.lsl, spec.lsl];
+            }
+
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = values;
+            chart.data.datasets[1].data = uslData;
+            chart.data.datasets[2].data = lslData;
+            
+            if (spec.lsl !== null) {
+                const range = spec.usl - spec.lsl;
+                chart.options.scales.y.suggestedMin = spec.lsl - (range * 0.3);
+                chart.options.scales.y.suggestedMax = spec.usl + (range * 0.3);
+            } else {
+                const minData = values.filter(v => v !== null).length > 0 ? Math.min(...values.filter(v => v !== null)) : 0;
+                chart.options.scales.y.suggestedMin = Math.max(minData - 1, 0); 
+                chart.options.scales.y.suggestedMax = spec.usl + (spec.usl * 0.05);
+            }
+            
+            chart.update();
+        }
+    }
+
+    highlightChart(paramKey, shouldScroll = false) {
+        document.querySelectorAll('[id^="chart-wrapper-"]').forEach(el => {
+            el.classList.remove('border-blue-500', 'ring-4', 'ring-blue-200', 'shadow-lg');
+            el.classList.add('border', 'shadow-sm');
+        });
+
+        const activeWrapper = document.getElementById(`chart-wrapper-${paramKey}`);
+        if (activeWrapper) {
+            activeWrapper.classList.remove('border', 'shadow-sm');
+            activeWrapper.classList.add('border-blue-500', 'ring-4', 'ring-blue-200', 'shadow-lg');
+            
+            if (shouldScroll) {
+                setTimeout(() => {
+                    activeWrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 100);
+            }
+        }
     }
 
     renderTable(dataRecords, currentConfig) {
+        if(!this.elements.tbody) return;
         this.elements.tbody.innerHTML = '';
         
         if(dataRecords.length === 0) {
-            this.elements.tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-4 text-center text-gray-400">ยังไม่มีข้อมูลสำหรับพารามิเตอร์นี้</td></tr>';
+            this.elements.tbody.innerHTML = '<tr><td colspan="4" class="px-2 py-4 text-center text-gray-400">ยังไม่มีข้อมูลสำหรับพารามิเตอร์นี้</td></tr>';
             return;
         }
 
@@ -310,11 +463,12 @@ class DashboardUI {
             const valColor = isOut ? 'text-red-600 font-bold' : 'text-gray-800';
             const tr = document.createElement('tr');
             tr.className = "border-b hover:bg-gray-50";
+            // ปรับตารางให้แสดงพอดีกับหน้าจอ
             tr.innerHTML = `
-                <td class="px-4 py-2">${r.timestamp}</td>
-                <td class="px-4 py-2">${r.machine}</td>
-                <td class="px-4 py-2">${r.operator}</td>
-                <td class="px-4 py-2 ${valColor}">${parseFloat(r.value).toFixed(3)}</td>
+                <td class="px-2 py-2">${r.timestamp.split(' ')[1] || r.timestamp}</td>
+                <td class="px-2 py-2">${r.machine ? r.machine.split('-')[1] || r.machine : ''}</td>
+                <td class="px-2 py-2 truncate max-w-[80px]">${r.operator ? r.operator.split(' ')[0] : ''}</td>
+                <td class="px-2 py-2 text-right ${valColor}">${parseFloat(r.value).toFixed(3)}</td>
             `;
             this.elements.tbody.appendChild(tr);
         });
@@ -357,15 +511,32 @@ class AppController {
         this.db = dbService;
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0 };
+        this.machineAssignments = {}; 
     }
 
     async init() {
-        this.ui.initChart();
         this.bindEvents();
         
-        this.handlePartChange(); 
-        await this.refreshDashboard(); // การโหลดครั้งแรกดึงจากเซิร์ฟเวอร์เต็มรูปแบบ
+        this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
+        this.ui.setLoadingState(true);
 
+        // ดึง Master Data 
+        const masterData = await this.db.getMasterData();
+        this.machineAssignments = masterData.machineAssignments || {};
+        
+        this.ui.populateOperators(masterData.operators || []);
+        this.ui.populateMachines(this.machineAssignments);
+        this.ui.populateParts(PART_SPECS);
+
+        if (Object.keys(this.machineAssignments).length > 0) {
+            this.ui.elements.machineSelect.selectedIndex = 1; 
+            this.handleMachineChange();
+        }
+
+        // โหลดครั้งแรกดึงจากเซิร์ฟเวอร์
+        await this.refreshDashboard(false, false);
+
+        this.ui.setLoadingState(false);
         const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
         const pendingCount = this.db.pendingQueue ? this.db.pendingQueue.length : 0;
         this.updateHeaderStatus(dbName, pendingCount);
@@ -380,16 +551,34 @@ class AppController {
     }
 
     bindEvents() {
+        this.ui.elements.machineSelect.addEventListener('change', () => this.handleMachineChange());
         this.ui.elements.partSelect.addEventListener('change', () => this.handlePartChange());
         this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
     }
 
+    handleMachineChange() {
+        const machine = this.ui.elements.machineSelect.value;
+        if (this.machineAssignments[machine]) {
+            this.ui.elements.partSelect.value = this.machineAssignments[machine];
+        }
+        this.handlePartChange();
+    }
+
     handlePartChange() {
         const part = this.ui.elements.partSelect.value;
         const specs = PART_SPECS[part];
-        this.ui.renderParameterOptions(specs);
-        this.handleParamChange(); 
+        
+        if(specs) {
+            // เตรียมหน้าต่างกราฟรอไว้
+            this.ui.setupAllCharts(part, specs);
+            this.ui.renderParameterOptions(specs);
+            this.handleParamChange(); 
+        } else {
+            this.ui.elements.paramSelect.innerHTML = '<option value="">-- กรุณาเลือกรุ่นชิ้นงาน --</option>';
+            this.ui.elements.specDisplay.innerHTML = '';
+            if(this.ui.elements.chartsContainer) this.ui.elements.chartsContainer.innerHTML = '';
+        }
     }
 
     handleParamChange() {
@@ -403,7 +592,7 @@ class AppController {
 
         this.ui.updateSpecInfo(spec);
         this.ui.clearInput();
-        this.refreshDashboard(true); // ตอนเปลี่ยนพารามิเตอร์ให้ดึงจาก Local Cache ทันที
+        this.refreshDashboard(true, true); // เปลี่ยนตัวเลือกให้โหลดเร็วขึ้นจาก Cache
     }
 
     async handleSubmit(e) {
@@ -421,14 +610,14 @@ class AppController {
         await this.db.save(record);
         
         this.ui.clearInput();
-        // อัปเดตกราฟด้วยข้อมูลจากหน่วยความจำ (รวดเร็วทันใจ)
-        this.refreshDashboard(true); 
+        // อัปเดตกราฟและเลื่อนจออัตโนมัติ
+        this.refreshDashboard(true, true); 
     }
 
-    async refreshDashboard(useLocalCache = false) {
+    async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
         let allRecords;
         
-        // เลือกว่าจะดึงจาก Cache (เร็ว) หรือไปโหลดมาจาก Google Sheets (ช้า)
+        // ถ้าแจ้งให้ใช้ Cache ได้ จะไปดึงข้อมูลในเครื่องมาเลย ไม่รอโหลดจาก Google
         if (useLocalCache && this.db.getLocalData) {
             allRecords = this.db.getLocalData();
         } else {
@@ -438,14 +627,17 @@ class AppController {
         const part = this.ui.elements.partSelect.value;
         const param = this.ui.elements.paramSelect.value;
 
+        if(!part || !PART_SPECS[part]) return;
+
+        // อัปเดตข้อมูลเข้าทุกกราฟ
+        this.ui.updateAllCharts(allRecords, part, PART_SPECS[part]);
+
         if(!param) return;
 
-        const spec = PART_SPECS[part][param];
-        this.ui.updateChartTitle(part, spec.name);
+        // ไฮไลต์และเลื่อนจอไปที่กราฟปัจจุบัน
+        this.ui.highlightChart(param, shouldScrollToChart);
 
         const filteredRecords = allRecords.filter(r => r.part === part && r.parameter === param);
-        
-        this.ui.renderChart(filteredRecords, this.currentConfig);
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
     }
