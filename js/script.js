@@ -99,6 +99,7 @@ class InMemoryService {
         return { success: true };
     }
     async getAll() { return this.data; }
+    getLocalData() { return this.data; }
     async getMasterData() {
         return {
             operators: ["พนักงาน 1", "พนักงาน 2"],
@@ -110,30 +111,112 @@ class InMemoryService {
 }
 
 class GoogleSheetService {
-    constructor(url) { this.url = url; }
-    async save(record) {
-        try {
-            const response = await fetch(this.url, {
-                method: 'POST',
-                body: JSON.stringify({ action: "add", data: record }),
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' }
-            });
-            return await response.json();
-        } catch (error) {
-            console.error("Error saving to Google Sheets:", error);
-            return { success: false };
-        }
+    constructor(url, onSyncUpdate) { 
+        this.url = url; 
+        this.onSyncUpdate = onSyncUpdate;
+        // โหลดข้อมูลที่ยังไม่ได้ส่ง จาก LocalStorage
+        this.pendingQueue = JSON.parse(localStorage.getItem('cpk_pending_queue') || '[]');
+        this.cachedData = []; // เก็บข้อมูลทั้งหมดไว้ให้ UI วาดได้เร็วๆ
+        this.isSyncing = false;
     }
+
+    // ฟังก์ชันช่วยบันทึกคิวลง LocalStorage และอัปเดต UI
+    _saveQueueToLocal() {
+        localStorage.setItem('cpk_pending_queue', JSON.stringify(this.pendingQueue));
+        if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
+    }
+
+    async save(record) {
+        // ลงเวลาให้เรียบร้อยตั้งแต่ตอนกด
+        record.timestamp = new Date().toLocaleString('th-TH');
+        
+        // เอาเข้าคิว Pending และอัปเดตแคชเพื่อโชว์กราฟทันที (Optimistic UI)
+        this.pendingQueue.push(record);
+        this.cachedData.push(record);
+        this._saveQueueToLocal();
+        
+        // สั่งให้อัปโหลดเบื้องหลัง (ไม่รอกลับมา)
+        this.syncBackground();
+        
+        return { success: true };
+    }
+
     async getAll() {
         try {
             const response = await fetch(`${this.url}?action=get`);
             const result = await response.json();
-            return result.data || [];
+            const serverData = result.data || [];
+
+            // ระบบป้องกันการซ้ำซ้อน: เคลียร์ข้อมูลใน pendingQueue ที่มีอยู่แล้วบนเซิร์ฟเวอร์
+            if (this.pendingQueue.length > 0) {
+                this.pendingQueue = this.pendingQueue.filter(pending => {
+                    // ตรวจสอบว่ามีข้อมูลนี้บันทึกบน Server หรือยัง (เช็ค Machine, Part, Param, Op, Value)
+                    const isAlreadyOnServer = serverData.some(server => 
+                        server.machine === pending.machine &&
+                        server.part === pending.part &&
+                        server.parameter === pending.parameter &&
+                        server.operator === pending.operator &&
+                        parseFloat(server.value) === parseFloat(pending.value)
+                    );
+                    return !isAlreadyOnServer; // เก็บไว้ในคิวเฉพาะตัวที่ยังไม่มีบนเซิร์ฟ
+                });
+                this._saveQueueToLocal();
+            }
+
+            // นำข้อมูลบนเซิร์ฟเวอร์ มารวมกับข้อมูลที่ต่อคิวอยู่ เพื่อแสดงผลให้ครบถ้วน
+            this.cachedData = [...serverData, ...this.pendingQueue];
+            
+            // สั่งซิงค์ตัวที่ยังตกค้าง
+            this.syncBackground();
+            
+            return this.cachedData;
         } catch (error) {
             console.error("Error fetching from Google Sheets:", error);
-            return [];
+            return this.cachedData.length > 0 ? this.cachedData : this.pendingQueue;
         }
     }
+
+    // ขอข้อมูลที่อยู่ในเครื่องไปแสดงผลทันทีโดยไม่ต้องรอโหลด
+    getLocalData() {
+        return this.cachedData;
+    }
+
+    // ฟังก์ชันซิงค์ข้อมูลเบื้องหลัง (Background Sync)
+    async syncBackground() {
+        if (this.isSyncing || this.pendingQueue.length === 0) return;
+        this.isSyncing = true;
+
+        if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
+
+        // ทยอยส่งข้อมูลในคิวไปเรื่อยๆ จนกว่าจะหมด
+        while (this.pendingQueue.length > 0) {
+            const recordToSync = this.pendingQueue[0];
+            try {
+                const response = await fetch(this.url, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "add", data: recordToSync }),
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    // ส่งสำเร็จ ลบออกจากคิวหน้าสุด
+                    this.pendingQueue.shift();
+                    this._saveQueueToLocal();
+                } else {
+                    console.error("Server return error:", result);
+                    break; // หยุดชั่วคราวหากมี Error แจ้งมาจากหลังบ้าน
+                }
+            } catch (error) {
+                console.error("Background sync network error:", error);
+                break; // หยุดชั่วคราวหากเน็ตหลุด
+            }
+        }
+
+        this.isSyncing = false;
+        if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
+    }
+
     async getMasterData() {
         try {
             const response = await fetch(`${this.url}?action=get_master`);
@@ -176,9 +259,21 @@ class DashboardUI {
         this.elements.statusText.className = `${colorClass} font-semibold`;
     }
 
+    // อัปเดต UI เมื่อมีรายการค้างอัปโหลด
+    updateSyncStatus(dbName, pendingCount) {
+        if (pendingCount > 0) {
+            this.elements.statusText.innerHTML = `${dbName} <span class="text-yellow-300 ml-2 animate-pulse">⏳ รออัปโหลด: ${pendingCount}</span>`;
+            this.elements.statusText.className = `text-green-400 font-semibold flex items-center`;
+        } else {
+            this.elements.statusText.innerText = dbName;
+            this.elements.statusText.className = `text-green-400 font-semibold`;
+        }
+    }
+
     setLoadingState(isLoading) {
         this.elements.btnSubmit.disabled = isLoading;
-        this.elements.btnSubmit.innerText = isLoading ? 'กำลังบันทึกและประมวลผล...' : 'บันทึกข้อมูล (Save)';
+        // เปลี่ยนคำบนปุ่มให้รู้ว่ากดได้เลย
+        this.elements.btnSubmit.innerText = isLoading ? 'กำลังประมวลผล...' : 'บันทึกข้อมูล (Save)';
     }
 
     clearInput() {
@@ -457,11 +552,14 @@ class AppController {
             this.handleMachineChange();
         }
 
-        await this.refreshDashboard(false);
+        // โหลดครั้งแรกดึงจากเซิร์ฟเวอร์
+        await this.refreshDashboard(false, false);
 
         this.ui.setLoadingState(false);
-        const dbName = this.db instanceof GoogleSheetService ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
-        this.ui.setStatus(dbName, "text-green-400");
+        const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
+        // อัปเดตสถานะ (รวมถึงตัวเลขคิวถ้ามีค้างอยู่)
+        const pendingCount = this.db.pendingQueue ? this.db.pendingQueue.length : 0;
+        this.ui.updateSyncStatus(dbName, pendingCount);
     }
 
     bindEvents() {
@@ -506,12 +604,12 @@ class AppController {
         this.ui.updateSpecInfo(spec);
         this.ui.clearInput();
         
-        this.refreshDashboard(false);
+        // เวลาแค่เปลี่ยนตัวเลือก ให้โหลดจาก Local Cache ก็พอ จะได้ไม่ช้า
+        this.refreshDashboard(false, true);
     }
 
     async handleSubmit(e) {
         e.preventDefault();
-        this.ui.setLoadingState(true);
 
         const record = {
             machine: this.ui.elements.machineSelect.value,
@@ -521,16 +619,23 @@ class AppController {
             operator: document.getElementById('operator').value
         };
 
+        // ส่งให้ DB (จะจัดการเอาเข้าคิวและทำงานต่อเบื้องหลังทันที ไม่ต้องรอเน็ต)
         await this.db.save(record);
         
+        // เคลียร์กล่องและอัปเดตกราฟ "ทันที" จาก Cache ภายใน
         this.ui.clearInput();
-        this.ui.setLoadingState(false);
-        
-        this.refreshDashboard(true);
+        this.refreshDashboard(true, true);
     }
 
-    async refreshDashboard(shouldScrollToChart = false) {
-        const allRecords = await this.db.getAll();
+    async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
+        // ดึงข้อมูล (ถ้า useLocalCache เป็น true จะดึงจากที่แคชไว้ในเครื่อง ทำให้เร็วมาก)
+        let allRecords;
+        if (useLocalCache && this.db.getLocalData) {
+            allRecords = this.db.getLocalData();
+        } else {
+            allRecords = await this.db.getAll();
+        }
+
         const part = this.ui.elements.partSelect.value;
         const param = this.ui.elements.paramSelect.value;
 
@@ -554,11 +659,18 @@ class AppController {
 // 6. BOOTSTRAP / ENTRY POINT
 // -----------------------------------------------------
 window.onload = () => {
+    const uiService = new DashboardUI();
+    
+    // Callback สำหรับรับแจ้งเตือนเวลายอดอัปโหลดเบื้องหลังเปลี่ยน
+    const syncStatusCallback = (pendingCount) => {
+        const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
+        uiService.updateSyncStatus(dbName, pendingCount);
+    };
+
     const databaseService = AppConfig.USE_GOOGLE_SHEET 
-        ? new GoogleSheetService(AppConfig.GOOGLE_SHEET_URL) 
+        ? new GoogleSheetService(AppConfig.GOOGLE_SHEET_URL, syncStatusCallback) 
         : new InMemoryService();
     
-    const uiService = new DashboardUI();
     const app = new AppController(databaseService, uiService);
     
     app.init();
