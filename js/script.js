@@ -112,7 +112,7 @@ class GoogleSheetService {
     constructor(url, onSyncUpdate) { 
         this.url = url; 
         this.onSyncUpdate = onSyncUpdate;
-        // ดึงคิวที่ค้างส่งจาก LocalStorage (กรณีปิดเว็บไปก่อนส่งเสร็จ)
+        // ดึงคิวที่ค้างส่งจาก LocalStorage
         this.pendingQueue = JSON.parse(localStorage.getItem('cpk_pending_queue') || '[]');
         this.cachedData = []; 
         this.isSyncing = false;
@@ -126,7 +126,7 @@ class GoogleSheetService {
     async save(record) {
         record.timestamp = new Date().toLocaleString('th-TH');
         
-        // 1. นำข้อมูลเข้าคิวและแคชเพื่อให้กราฟอัปเดตทันทีโดยไม่ต้องรอโหลด
+        // 1. นำข้อมูลเข้าคิวและแคชเพื่อให้กราฟอัปเดตทันที
         this.pendingQueue.push(record);
         this.cachedData.push(record);
         this._saveQueueToLocal();
@@ -217,14 +217,15 @@ class GoogleSheetService {
 // -----------------------------------------------------
 class DashboardUI {
     constructor() {
-        this.chartInstances = {}; // จัดการหลายกราฟพร้อมกัน
+        this.chartInstances = {}; 
+        this.bellChartInstance = null; // อินสแตนซ์สำหรับกราฟระฆังคว่ำ
         this.elements = {
             machineSelect: document.getElementById('machine-id'),
             partSelect: document.getElementById('part-id'),
             paramSelect: document.getElementById('parameter-id'),
             specDisplay: document.getElementById('spec-display'),
             measuredInput: document.getElementById('measured-value'),
-            chartsContainer: document.getElementById('charts-container'), // กล่องใส่กราฟทั้งหมด
+            chartsContainer: document.getElementById('charts-container'), 
             overviewPartTitle: document.getElementById('overview-part-title'),
             tbody: document.getElementById('data-table-body'),
             btnSubmit: document.getElementById('submit-btn'),
@@ -320,6 +321,196 @@ class DashboardUI {
         this.elements.specDisplay.innerHTML = `สเปค (Spec): <b>${spec.name}</b> <br/> (LSL: ${lslText} / USL: ${spec.usl})`;
     }
 
+    // สร้างและแทรกกล่องกราฟระฆังคว่ำอัตโนมัติ
+    createBellCurveContainer() {
+        let container = document.getElementById('bell-curve-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'bell-curve-container';
+            container.className = 'bg-white p-4 rounded-xl shadow-sm border mt-6 mb-6 transition-all duration-500 ease-in-out';
+            container.innerHTML = `
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h3 class="text-md font-bold text-gray-700">การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)</h3>
+                    <span id="bell-chart-title" class="text-xs bg-purple-100 text-purple-800 px-3 py-1 rounded-full font-bold"></span>
+                </div>
+                <div class="relative h-[300px] w-full">
+                    <canvas id="bellCurveCanvas"></canvas>
+                </div>
+            `;
+            
+            // แทรกต่อจากกล่อง KPI (เพื่อความสวยงามให้อยู่ข้างบน Trend Charts)
+            const kpiContainer = this.elements.kpiCpkCard?.parentElement;
+            if (kpiContainer && kpiContainer.parentNode) {
+                kpiContainer.parentNode.insertBefore(container, kpiContainer.nextSibling);
+            }
+            
+            // กำหนดค่าตั้งต้นของกราฟ (Chart.js Config)
+            const ctx = document.getElementById('bellCurveCanvas').getContext('2d');
+            this.bellChartInstance = new Chart(ctx, {
+                data: {
+                    datasets: [
+                        {
+                            type: 'bar',
+                            label: 'ความถี่ (Histogram)',
+                            data: [],
+                            backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                            borderColor: 'rgb(59, 130, 246)',
+                            borderWidth: 1,
+                            barPercentage: 1.0,
+                            categoryPercentage: 1.0
+                        },
+                        {
+                            type: 'line',
+                            label: 'ระฆังคว่ำ (Normal Curve)',
+                            data: [],
+                            borderColor: 'rgb(168, 85, 247)', // สีม่วง
+                            borderWidth: 2.5,
+                            pointRadius: 0,
+                            fill: true,
+                            backgroundColor: 'rgba(168, 85, 247, 0.15)',
+                            tension: 0.4
+                        },
+                        {
+                            type: 'line',
+                            label: 'LSL',
+                            data: [],
+                            borderColor: 'rgb(239, 68, 68)',
+                            borderDash: [5, 5],
+                            borderWidth: 2,
+                            pointRadius: 0
+                        },
+                        {
+                            type: 'line',
+                            label: 'USL',
+                            data: [],
+                            borderColor: 'rgb(239, 68, 68)',
+                            borderDash: [5, 5],
+                            borderWidth: 2,
+                            pointRadius: 0
+                        },
+                        {
+                            type: 'line',
+                            label: 'Target',
+                            data: [],
+                            borderColor: 'rgb(34, 197, 94)', // สีเขียว
+                            borderDash: [3, 3],
+                            borderWidth: 2,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    scales: { 
+                        x: { 
+                            type: 'linear', 
+                            position: 'bottom',
+                            title: { display: true, text: 'ค่าที่วัดได้ (Measured Value)' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'ความถี่ (Frequency)' }
+                        }
+                    },
+                    plugins: {
+                        legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10 } },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    interaction: { mode: 'nearest', axis: 'x', intersect: false }
+                }
+            });
+        }
+    }
+
+    // วาดกราฟระฆังคว่ำสำหรับพารามิเตอร์ปัจจุบัน
+    renderBellCurve(dataRecords, currentConfig, partName) {
+        if (!document.getElementById('bell-curve-container')) {
+            this.createBellCurveContainer();
+        }
+
+        const titleEl = document.getElementById('bell-chart-title');
+        if (titleEl) {
+            titleEl.innerText = `${partName} - ${currentConfig.name ? currentConfig.name.split(':')[0] : ''}`;
+        }
+
+        const values = dataRecords.map(r => parseFloat(r.value)).filter(v => !isNaN(v));
+        
+        // ถ้าน้อยกว่า 2 ค่า ยังพล็อตกราฟระฆังคว่ำไม่ได้
+        if (values.length < 2) {
+            this.bellChartInstance.data.datasets.forEach(ds => ds.data = []);
+            this.bellChartInstance.update();
+            return;
+        }
+
+        const mean = StatUtils.mean(values);
+        const sigma = StatUtils.stdDev(values, mean);
+
+        // ขยายขอบเขตแกน X ให้ครอบคลุม LSL, USL และ 3 Sigma
+        let minVal = Math.min(...values);
+        let maxVal = Math.max(...values);
+        if (currentConfig.lsl !== null) minVal = Math.min(minVal, currentConfig.lsl);
+        if (currentConfig.usl !== null) maxVal = Math.max(maxVal, currentConfig.usl);
+        minVal = Math.min(minVal, mean - 3.5 * sigma);
+        maxVal = Math.max(maxVal, mean + 3.5 * sigma);
+
+        // คำนวณความถี่เพื่อสร้าง Histogram (แบ่งจำนวนแท่งตามปริมาณข้อมูล)
+        const n = values.length;
+        const binCount = Math.max(7, Math.min(20, Math.ceil(Math.sqrt(n))));
+        const binWidth = (maxVal - minVal) / binCount;
+        const bins = new Array(binCount).fill(0);
+
+        values.forEach(v => {
+            let idx = Math.floor((v - minVal) / binWidth);
+            if (idx >= binCount) idx = binCount - 1;
+            if (idx < 0) idx = 0;
+            bins[idx]++;
+        });
+
+        // สร้าง Data สำหรับแท่ง Histogram
+        const histData = bins.map((count, i) => ({ 
+            x: minVal + (i + 0.5) * binWidth, 
+            y: count 
+        }));
+
+        // สร้าง Data สำหรับเส้น Normal Distribution (ระฆังคว่ำ)
+        const curveData = [];
+        const steps = 100;
+        const stepSize = (maxVal - minVal) / steps;
+        let maxCurveY = 0;
+
+        for (let i = 0; i <= steps; i++) {
+            const x = minVal + i * stepSize;
+            let y = 0;
+            if (sigma > 0) {
+                // คำนวณสมการ PDF แล้ว Scale กลับให้ตรงกับความสูงของ Histogram
+                const pdf = (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / sigma, 2));
+                y = pdf * n * binWidth; 
+            }
+            curveData.push({ x, y });
+            if (y > maxCurveY) maxCurveY = y;
+        }
+
+        const maxHistY = Math.max(...bins, 0);
+        const maxY = Math.max(maxHistY, maxCurveY) * 1.15; // เผื่อพื้นที่ด้านบน 15%
+
+        // ป้อนข้อมูลเข้ากราฟ
+        this.bellChartInstance.data.datasets[0].data = histData;  // แท่งความถี่
+        this.bellChartInstance.data.datasets[1].data = curveData; // เส้นระฆังคว่ำ
+
+        // เส้นแกนแนวตั้ง (USL, LSL, Target)
+        this.bellChartInstance.data.datasets[2].data = currentConfig.lsl !== null ? [{x: currentConfig.lsl, y: 0}, {x: currentConfig.lsl, y: maxY}] : [];
+        this.bellChartInstance.data.datasets[3].data = currentConfig.usl !== null ? [{x: currentConfig.usl, y: 0}, {x: currentConfig.usl, y: maxY}] : [];
+        this.bellChartInstance.data.datasets[4].data = currentConfig.target !== null ? [{x: currentConfig.target, y: 0}, {x: currentConfig.target, y: maxY}] : [];
+
+        // กำหนดสเกลเพื่อให้เส้นตรงกับพื้นที่
+        this.bellChartInstance.options.scales.x.min = minVal;
+        this.bellChartInstance.options.scales.x.max = maxVal;
+        this.bellChartInstance.options.scales.y.max = maxY;
+
+        this.bellChartInstance.update();
+    }
+
     // สร้าง DOM ของกราฟทุกตัวอัตโนมัติเมื่อเลือกรุ่นชิ้นงาน
     setupAllCharts(partName, specsObject) {
         if(this.elements.overviewPartTitle) this.elements.overviewPartTitle.innerText = partName;
@@ -368,7 +559,7 @@ class DashboardUI {
                     scales: { 
                         x: { 
                             ticks: { 
-                                display: true, // แสดงเส้นเวลา
+                                display: true, 
                                 maxRotation: 45
                             } 
                         } 
@@ -378,7 +569,7 @@ class DashboardUI {
         }
     }
 
-    // อัปเดตข้อมูลกราฟทุกตัว
+    // อัปเดตข้อมูลกราฟรายตัว
     updateAllCharts(dataRecords, part, specsObject) {
         for (const [key, spec] of Object.entries(specsObject)) {
             const chart = this.chartInstances[key];
@@ -392,7 +583,7 @@ class DashboardUI {
             let uslData = Array(displayRecords.length).fill(spec.usl);
             let lslData = spec.lsl !== null ? Array(displayRecords.length).fill(spec.lsl) : [];
             
-            // ขึงเส้นขอบ LSL/USL กรณีไม่มีข้อมูล หรือมีจุดเดียว
+            // ขึงเส้นขอบ LSL/USL
             if (displayRecords.length === 0) {
                 labels = ['(ว่าง)', '(รอข้อมูล)'];
                 values = [null, null];
@@ -508,7 +699,7 @@ class AppController {
     constructor(dbService, uiService) {
         this.db = dbService;
         this.ui = uiService;
-        this.currentConfig = { target: 0, usl: 0, lsl: 0 };
+        this.currentConfig = { target: 0, usl: 0, lsl: 0, name: '' };
         this.machineAssignments = {}; 
     }
 
@@ -518,7 +709,6 @@ class AppController {
         this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
         this.ui.setLoadingState(true);
 
-        // ดึง Master Data 
         const masterData = await this.db.getMasterData();
         this.machineAssignments = masterData.machineAssignments || {};
         
@@ -531,7 +721,6 @@ class AppController {
             this.handleMachineChange();
         }
 
-        // โหลดครั้งแรกดึงจากเซิร์ฟเวอร์
         await this.refreshDashboard(false, false);
 
         this.ui.setLoadingState(false);
@@ -568,7 +757,6 @@ class AppController {
         const specs = PART_SPECS[part];
         
         if(specs) {
-            // เตรียมหน้าต่างกราฟรอไว้
             this.ui.setupAllCharts(part, specs);
             this.ui.renderParameterOptions(specs);
             this.handleParamChange(); 
@@ -586,11 +774,12 @@ class AppController {
         if(!param || !PART_SPECS[part][param]) return;
 
         const spec = PART_SPECS[part][param];
-        this.currentConfig = { target: spec.target, usl: spec.usl, lsl: spec.lsl };
+        // เพิ่ม name เข้าไปใน config ปัจจุบัน
+        this.currentConfig = { target: spec.target, usl: spec.usl, lsl: spec.lsl, name: spec.name };
 
         this.ui.updateSpecInfo(spec);
         this.ui.clearInput();
-        this.refreshDashboard(true, true); // เปลี่ยนตัวเลือกให้โหลดเร็วขึ้นจาก Cache
+        this.refreshDashboard(true, true); 
     }
 
     async handleSubmit(e) {
@@ -604,18 +793,15 @@ class AppController {
             operator: document.getElementById('operator').value
         };
 
-        // บันทึกลงเครื่องทันที (ไม่รอเซิร์ฟเวอร์)
         await this.db.save(record);
         
         this.ui.clearInput();
-        // อัปเดตกราฟและเลื่อนจออัตโนมัติ
         this.refreshDashboard(true, true); 
     }
 
     async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
         let allRecords;
         
-        // ถ้าแจ้งให้ใช้ Cache ได้ จะไปดึงข้อมูลในเครื่องมาเลย ไม่รอโหลดจาก Google
         if (useLocalCache && this.db.getLocalData) {
             allRecords = this.db.getLocalData();
         } else {
@@ -627,17 +813,18 @@ class AppController {
 
         if(!part || !PART_SPECS[part]) return;
 
-        // อัปเดตข้อมูลเข้าทุกกราฟ
         this.ui.updateAllCharts(allRecords, part, PART_SPECS[part]);
 
         if(!param) return;
 
-        // ไฮไลต์และเลื่อนจอไปที่กราฟปัจจุบัน
         this.ui.highlightChart(param, shouldScrollToChart);
 
         const filteredRecords = allRecords.filter(r => r.part === part && r.parameter === param);
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
+        
+        // วาดกราฟระฆังคว่ำ
+        this.ui.renderBellCurve(filteredRecords, this.currentConfig, part);
     }
 }
 
@@ -648,7 +835,6 @@ window.onload = () => {
     const uiService = new DashboardUI();
     let appInstance = null;
 
-    // ระบบ Callback เพื่อให้ UI อัปเดตตัวเลข ⏳ เมื่ออัปโหลดเบื้องหลังสำเร็จ
     const syncStatusCallback = (pendingCount) => {
         if (appInstance) {
             const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
