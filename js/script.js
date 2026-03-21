@@ -450,36 +450,39 @@ class DashboardUI {
         const mean = StatUtils.mean(values);
         const sigma = StatUtils.stdDev(values, mean);
 
-        // ขยายขอบเขตแกน X ให้ครอบคลุม LSL, USL และ 3 Sigma
-        let minVal = Math.min(...values);
-        let maxVal = Math.max(...values);
-        if (currentConfig.lsl !== null) minVal = Math.min(minVal, currentConfig.lsl);
-        if (currentConfig.usl !== null) maxVal = Math.max(maxVal, currentConfig.usl);
-        minVal = Math.min(minVal, mean - 3.5 * sigma);
-        maxVal = Math.max(maxVal, mean + 3.5 * sigma);
-
-        // คำนวณความถี่เพื่อสร้าง Histogram (แบ่งจำนวนแท่งให้ถี่ขึ้นเหมาะกับข้อมูลทศนิยม 2 ตำแหน่ง)
+        // ขอบเขตข้อมูลจริง (สำหรับ Histogram bins)
+        const dataMin = Math.min(...values);
+        const dataMax = Math.max(...values);
         const n = values.length;
-        const dataRange = maxVal - minVal;
-        // ใช้ step 0.01 สำหรับข้อมูลทศนิยม 2 ตำแหน่ง แต่จำกัดไม่ให้มากหรือน้อยเกินไป
+
+        // คำนวณ bin จาก data range จริง (ไม่รวม sigma extension)
+        const dataRange = dataMax - dataMin || 1;
+        const binBySturges = Math.ceil(1 + 3.322 * Math.log10(n));
         const binByPrecision = Math.round(dataRange / 0.01);
-        const binBySqrt = Math.ceil(Math.sqrt(n));
-        const binCount = Math.max(15, Math.min(50, Math.max(binByPrecision, binBySqrt)));
-        const binWidth = (maxVal - minVal) / binCount;
+        const binCount = Math.max(binBySturges, Math.min(50, binByPrecision));
+        const binWidth = dataRange / binCount;
         const bins = new Array(binCount).fill(0);
 
         values.forEach(v => {
-            let idx = Math.floor((v - minVal) / binWidth);
+            let idx = Math.floor((v - dataMin) / binWidth);
             if (idx >= binCount) idx = binCount - 1;
             if (idx < 0) idx = 0;
             bins[idx]++;
         });
 
-        // สร้าง Data สำหรับแท่ง Histogram
-        const histData = bins.map((count, i) => ({ 
-            x: minVal + (i + 0.5) * binWidth, 
-            y: count 
+        // สร้าง Data สำหรับแท่ง Histogram (ตำแหน่งตาม data range จริง)
+        const histData = bins.map((count, i) => ({
+            x: dataMin + (i + 0.5) * binWidth,
+            y: count
         }));
+
+        // ขยายขอบเขตแกน X ให้ครอบคลุม LSL, USL และ 3.5 Sigma
+        let minVal = dataMin;
+        let maxVal = dataMax;
+        if (currentConfig.lsl !== null) minVal = Math.min(minVal, currentConfig.lsl);
+        if (currentConfig.usl !== null) maxVal = Math.max(maxVal, currentConfig.usl);
+        minVal = Math.min(minVal, mean - 3.5 * sigma);
+        maxVal = Math.max(maxVal, mean + 3.5 * sigma);
 
         // สร้าง Data สำหรับเส้น Normal Distribution (ระฆังคว่ำ)
         const curveData = [];
@@ -491,9 +494,8 @@ class DashboardUI {
             const x = minVal + i * stepSize;
             let y = 0;
             if (sigma > 0) {
-                // คำนวณสมการ PDF แล้ว Scale กลับให้ตรงกับความสูงของ Histogram
                 const pdf = (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / sigma, 2));
-                y = pdf * n * binWidth; 
+                y = pdf * n * binWidth;
             }
             curveData.push({ x, y });
             if (y > maxCurveY) maxCurveY = y;
