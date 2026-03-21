@@ -455,26 +455,30 @@ class DashboardUI {
         const dataMax = Math.max(...values);
         const n = values.length;
 
-        // คำนวณ bin จาก data range จริง (ไม่รวม sigma extension)
+        // คำนวณ bin ด้วย binWidth = 0.1 (เหมาะกับข้อมูลทศนิยม 1-2 ตำแหน่ง)
         const dataRange = dataMax - dataMin || 1;
-        const binBySturges = Math.ceil(1 + 3.322 * Math.log10(n));
-        const binByPrecision = Math.round(dataRange / 0.01);
-        const binCount = Math.max(binBySturges, Math.min(50, binByPrecision));
-        const binWidth = dataRange / binCount;
+        const binWidth = 0.1;
+        const binCount = Math.max(5, Math.ceil(dataRange / binWidth));
+        const actualBinWidth = dataRange / binCount;
         const bins = new Array(binCount).fill(0);
 
         values.forEach(v => {
-            let idx = Math.floor((v - dataMin) / binWidth);
+            let idx = Math.floor((v - dataMin) / actualBinWidth);
             if (idx >= binCount) idx = binCount - 1;
             if (idx < 0) idx = 0;
             bins[idx]++;
         });
 
-        // สร้าง Data สำหรับแท่ง Histogram (ตำแหน่งตาม data range จริง)
-        const histData = bins.map((count, i) => ({
-            x: dataMin + (i + 0.5) * binWidth,
-            y: count
-        }));
+        // สร้าง Data สำหรับแท่ง Histogram (เฉพาะ bins ที่มีข้อมูล)
+        const histData = [];
+        bins.forEach((count, i) => {
+            if (count > 0) {
+                histData.push({
+                    x: dataMin + (i + 0.5) * actualBinWidth,
+                    y: count
+                });
+            }
+        });
 
         // ขยายขอบเขตแกน X ให้ครอบคลุม LSL, USL และ 3.5 Sigma
         let minVal = dataMin;
@@ -483,6 +487,12 @@ class DashboardUI {
         if (currentConfig.usl !== null) maxVal = Math.max(maxVal, currentConfig.usl);
         minVal = Math.min(minVal, mean - 3.5 * sigma);
         maxVal = Math.max(maxVal, mean + 3.5 * sigma);
+
+        // คำนวณความกว้างแท่งเป็น pixels ให้เห็นชัดเจน
+        const chartWidth = this.bellChartInstance.width || 600;
+        const axisRange = maxVal - minVal;
+        const barThicknessPx = Math.max(10, Math.round((actualBinWidth / axisRange) * chartWidth * 0.9));
+        this.bellChartInstance.data.datasets[0].barThickness = barThicknessPx;
 
         // สร้าง Data สำหรับเส้น Normal Distribution (ระฆังคว่ำ)
         const curveData = [];
@@ -495,18 +505,18 @@ class DashboardUI {
             let y = 0;
             if (sigma > 0) {
                 const pdf = (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / sigma, 2));
-                y = pdf * n * binWidth;
+                y = pdf * n * actualBinWidth;
             }
             curveData.push({ x, y });
             if (y > maxCurveY) maxCurveY = y;
         }
 
         const maxHistY = Math.max(...bins, 0);
-        const maxY = Math.max(maxHistY, maxCurveY) * 1.15; // เผื่อพื้นที่ด้านบน 15%
+        const maxY = Math.max(maxHistY, maxCurveY) * 1.15;
 
         // ป้อนข้อมูลเข้ากราฟ
-        this.bellChartInstance.data.datasets[0].data = histData;  // แท่งความถี่
-        this.bellChartInstance.data.datasets[1].data = curveData; // เส้นระฆังคว่ำ
+        this.bellChartInstance.data.datasets[0].data = histData;
+        this.bellChartInstance.data.datasets[1].data = curveData;
 
         // เส้นแกนแนวตั้ง (USL, LSL, Target)
         this.bellChartInstance.data.datasets[2].data = currentConfig.lsl !== null ? [{x: currentConfig.lsl, y: 0}, {x: currentConfig.lsl, y: maxY}] : [];
