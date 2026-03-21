@@ -402,11 +402,15 @@ class DashboardUI {
                 options: { 
                     responsive: true, 
                     maintainAspectRatio: false, 
-                    scales: { 
-                        x: { 
-                            type: 'linear', 
+                    scales: {
+                        x: {
+                            type: 'linear',
                             position: 'bottom',
-                            title: { display: true, text: 'ค่าที่วัดได้ (Measured Value)' }
+                            title: { display: true, text: 'ค่าที่วัดได้ (Measured Value)' },
+                            ticks: {
+                                callback: function(value) { return value.toFixed(2); },
+                                maxTicksLimit: 12
+                            }
                         },
                         y: {
                             beginAtZero: true,
@@ -454,9 +458,13 @@ class DashboardUI {
         minVal = Math.min(minVal, mean - 3.5 * sigma);
         maxVal = Math.max(maxVal, mean + 3.5 * sigma);
 
-        // คำนวณความถี่เพื่อสร้าง Histogram (แบ่งจำนวนแท่งตามปริมาณข้อมูล)
+        // คำนวณความถี่เพื่อสร้าง Histogram (แบ่งจำนวนแท่งให้ถี่ขึ้นเหมาะกับข้อมูลทศนิยม 2 ตำแหน่ง)
         const n = values.length;
-        const binCount = Math.max(7, Math.min(20, Math.ceil(Math.sqrt(n))));
+        const dataRange = maxVal - minVal;
+        // ใช้ step 0.01 สำหรับข้อมูลทศนิยม 2 ตำแหน่ง แต่จำกัดไม่ให้มากหรือน้อยเกินไป
+        const binByPrecision = Math.round(dataRange / 0.01);
+        const binBySqrt = Math.ceil(Math.sqrt(n));
+        const binCount = Math.max(15, Math.min(50, Math.max(binByPrecision, binBySqrt)));
         const binWidth = (maxVal - minVal) / binCount;
         const bins = new Array(binCount).fill(0);
 
