@@ -4,7 +4,16 @@
 const AppConfig = {
     // ⚠️ นำ Web App URL ที่ได้จากการกด Deploy ใน Apps Script ของคุณมาใส่ตรงนี้
     GOOGLE_SHEET_URL: "https://script.google.com/macros/s/AKfycbwjG6lo8DGi1bX_jWvCQ1cFZYGXEL8nzkm91_HQi21QqhsWgovG6RFTEF_sDpcW3oor/exec",
-    USE_GOOGLE_SHEET: true // เปลี่ยนเป็น false หากต้องการทดสอบแบบ In-Memory โดยไม่ต่อเน็ต
+    USE_GOOGLE_SHEET: true, // เปลี่ยนเป็น false หากต้องการทดสอบแบบ In-Memory โดยไม่ต่อเน็ต
+    REQUEST_TIMEOUT_MS: 10000 // ป้องกันหน้าจอค้างที่สถานะกำลังเชื่อมต่อเมื่อ Apps Script ไม่ตอบกลับ
+};
+
+const DEFAULT_MASTER_DATA = {
+    operators: ["พนักงาน 1", "พนักงาน 2"],
+    machineAssignments: {
+        "Machine CWM-01": "S1B29288-JR (10A)",
+        "Machine CWM-02": "S1B71819-JR (16A)"
+    }
 };
 
 // อัปเดตชื่อ Part ให้ตรงกับค่าใน Google Sheet หน้า Config เป๊ะๆ
@@ -50,20 +59,20 @@ class StatUtils {
     static mean(arr) {
         return arr.reduce((a, b) => a + b, 0) / arr.length;
     }
-    
+
     static stdDev(arr, meanVal) {
         if (arr.length <= 1) return 0;
         const variance = arr.reduce((sum, val) => sum + Math.pow(val - meanVal, 2), 0) / (arr.length - 1);
         return Math.sqrt(variance);
     }
-    
+
     static calculateCapability(dataArray, usl, lsl) {
         if (dataArray.length < 2) return { cp: "-", cpk: "-", mean: "-" };
-        
+
         const mean = this.mean(dataArray);
         const sigma = this.stdDev(dataArray, mean);
-        
-        if (sigma === 0) return { cp: "-", cpk: "-", mean: mean.toFixed(3) }; 
+
+        if (sigma === 0) return { cp: "-", cpk: "-", mean: mean.toFixed(3) };
 
         let cp = null, cpu = null, cpl = null, cpk = null;
 
@@ -72,10 +81,10 @@ class StatUtils {
             cpu = (usl - mean) / (3 * sigma);
             cpl = (mean - lsl) / (3 * sigma);
             cpk = Math.min(cpu, cpl);
-        } else if (usl !== null) { 
+        } else if (usl !== null) {
             cpu = (usl - mean) / (3 * sigma);
-            cpk = cpu; 
-        } else if (lsl !== null) { 
+            cpk = cpu;
+        } else if (lsl !== null) {
             cpl = (mean - lsl) / (3 * sigma);
             cpk = cpl;
         }
@@ -101,21 +110,42 @@ class InMemoryService {
     async getAll() { return this.data; }
     getLocalData() { return this.data; }
     async getMasterData() {
-        return {
-            operators: ["พนักงาน 1", "พนักงาน 2"],
-            machineAssignments: { "Machine_CWM-01": "S1B29288-JR (10A)" }
-        };
+        return DEFAULT_MASTER_DATA;
     }
 }
 
 class GoogleSheetService {
-    constructor(url, onSyncUpdate) { 
-        this.url = url; 
+    constructor(url, onSyncUpdate) {
+        this.url = url;
         this.onSyncUpdate = onSyncUpdate;
         // ดึงคิวที่ค้างส่งจาก LocalStorage
         this.pendingQueue = JSON.parse(localStorage.getItem('cpk_pending_queue') || '[]');
-        this.cachedData = []; 
+        this.cachedData = [...this.pendingQueue];
         this.isSyncing = false;
+        this.isOnline = true;
+    }
+
+    async _fetchJson(url, options = {}) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), AppConfig.REQUEST_TIMEOUT_MS);
+
+        try {
+            const response = await fetch(url, { ...options, signal: controller.signal });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            this.isOnline = true;
+            return await response.json();
+        } catch (error) {
+            this.isOnline = false;
+            if (error.name === 'AbortError') {
+                throw new Error(`Request timed out after ${AppConfig.REQUEST_TIMEOUT_MS / 1000} seconds`);
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
 
     _saveQueueToLocal() {
@@ -125,28 +155,27 @@ class GoogleSheetService {
 
     async save(record) {
         record.timestamp = new Date().toLocaleString('th-TH');
-        
+
         // 1. นำข้อมูลเข้าคิวและแคชเพื่อให้กราฟอัปเดตทันที
         this.pendingQueue.push(record);
         this.cachedData.push(record);
         this._saveQueueToLocal();
-        
-        // 2. สั่งอัปโหลดไป Google Sheet เบื้องหลัง 
+
+        // 2. สั่งอัปโหลดไป Google Sheet เบื้องหลัง
         this.syncBackground();
-        
+
         return { success: true };
     }
 
     async getAll() {
         try {
-            const response = await fetch(`${this.url}?action=get`);
-            const result = await response.json();
+            const result = await this._fetchJson(`${this.url}?action=get`);
             const serverData = result.data || [];
 
             // ระบบป้องกันข้อมูลซ้ำ: ลบข้อมูลในคิวที่ขึ้นเซิร์ฟเวอร์สำเร็จไปแล้ว
             if (this.pendingQueue.length > 0) {
                 this.pendingQueue = this.pendingQueue.filter(pending => {
-                    const isAlreadyOnServer = serverData.some(server => 
+                    const isAlreadyOnServer = serverData.some(server =>
                         server.part === pending.part &&
                         server.parameter === pending.parameter &&
                         server.operator === pending.operator &&
@@ -159,14 +188,14 @@ class GoogleSheetService {
 
             this.cachedData = [...serverData, ...this.pendingQueue];
             this.syncBackground();
-            
+
             return this.cachedData;
         } catch (error) {
             console.error("Error fetching from Google Sheets:", error);
             return this.cachedData.length > 0 ? this.cachedData : this.pendingQueue;
         }
     }
-    
+
     getLocalData() {
         return this.cachedData;
     }
@@ -179,35 +208,34 @@ class GoogleSheetService {
         while (this.pendingQueue.length > 0) {
             const recordToSync = this.pendingQueue[0];
             try {
-                const response = await fetch(this.url, {
+                const result = await this._fetchJson(this.url, {
                     method: 'POST',
                     body: JSON.stringify({ action: "add", data: recordToSync }),
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' }
                 });
-                const result = await response.json();
-                
+
                 if (result.success) {
                     this.pendingQueue.shift(); // ส่งสำเร็จ ลบออกจากคิว
                     this._saveQueueToLocal();
                 } else {
-                    break; 
+                    break;
                 }
             } catch (error) {
-                break; // เน็ตหลุด ให้หยุดอัปโหลดไว้ก่อนแล้วค่อยส่งใหม่ทีหลัง
+                console.error("Error syncing to Google Sheets:", error);
+                break; // เน็ตหลุดหรือเซิร์ฟเวอร์ไม่ตอบ ให้หยุดอัปโหลดไว้ก่อนแล้วค่อยส่งใหม่ทีหลัง
             }
         }
         this.isSyncing = false;
         if (this.onSyncUpdate) this.onSyncUpdate(this.pendingQueue.length);
     }
-    
+
     async getMasterData() {
         try {
-            const response = await fetch(`${this.url}?action=get_master`);
-            const result = await response.json();
-            return result.data || { operators: [], machineAssignments: {} };
+            const result = await this._fetchJson(`${this.url}?action=get_master`);
+            return result.data || DEFAULT_MASTER_DATA;
         } catch (error) {
             console.error("Error fetching Master Data:", error);
-            return { operators: [], machineAssignments: {} };
+            return DEFAULT_MASTER_DATA;
         }
     }
 }
@@ -217,7 +245,7 @@ class GoogleSheetService {
 // -----------------------------------------------------
 class DashboardUI {
     constructor() {
-        this.chartInstances = {}; 
+        this.chartInstances = {};
         this.bellChartInstance = null; // อินสแตนซ์สำหรับกราฟระฆังคว่ำ
         this.elements = {
             machineSelect: document.getElementById('machine-id'),
@@ -225,7 +253,7 @@ class DashboardUI {
             paramSelect: document.getElementById('parameter-id'),
             specDisplay: document.getElementById('spec-display'),
             measuredInput: document.getElementById('measured-value'),
-            chartsContainer: document.getElementById('charts-container'), 
+            chartsContainer: document.getElementById('charts-container'),
             overviewPartTitle: document.getElementById('overview-part-title'),
             tbody: document.getElementById('data-table-body'),
             btnSubmit: document.getElementById('submit-btn'),
@@ -307,7 +335,7 @@ class DashboardUI {
     }
 
     renderParameterOptions(specsObject) {
-        this.elements.paramSelect.innerHTML = ''; 
+        this.elements.paramSelect.innerHTML = '';
         for (const [key, spec] of Object.entries(specsObject)) {
             const option = document.createElement('option');
             option.value = key;
@@ -337,13 +365,13 @@ class DashboardUI {
                     <canvas id="bellCurveCanvas"></canvas>
                 </div>
             `;
-            
+
             // แทรกต่อจากกล่อง KPI (เพื่อความสวยงามให้อยู่ข้างบน Trend Charts)
             const kpiContainer = this.elements.kpiCpkCard?.parentElement;
             if (kpiContainer && kpiContainer.parentNode) {
                 kpiContainer.parentNode.insertBefore(container, kpiContainer.nextSibling);
             }
-            
+
             // กำหนดค่าตั้งต้นของกราฟ (Chart.js Config)
             const ctx = document.getElementById('bellCurveCanvas').getContext('2d');
             this.bellChartInstance = new Chart(ctx, {
@@ -399,9 +427,9 @@ class DashboardUI {
                         }
                     ]
                 },
-                options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
                     scales: {
                         x: {
                             type: 'linear',
@@ -439,7 +467,7 @@ class DashboardUI {
         }
 
         const values = dataRecords.map(r => parseFloat(r.value)).filter(v => !isNaN(v));
-        
+
         // ถ้าน้อยกว่า 2 ค่า ยังพล็อตกราฟระฆังคว่ำไม่ได้
         if (values.length < 2) {
             this.bellChartInstance.data.datasets.forEach(ds => ds.data = []);
@@ -525,7 +553,7 @@ class DashboardUI {
     setupAllCharts(partName, specsObject) {
         if(this.elements.overviewPartTitle) this.elements.overviewPartTitle.innerText = partName;
         if(!this.elements.chartsContainer) return;
-        
+
         this.elements.chartsContainer.innerHTML = '';
         this.chartInstances = {};
 
@@ -540,12 +568,12 @@ class DashboardUI {
                 <h3 class="text-sm font-bold text-gray-700">${spec.name.split(':')[0]}</h3>
                 <span class="text-xs text-gray-500 truncate ml-2" title="${spec.name.split(':')[1] || spec.name}">${spec.name.split(':')[1] || spec.name}</span>
             `;
-            
+
             const canvasContainer = document.createElement('div');
             canvasContainer.className = 'relative h-48 w-full';
             const canvas = document.createElement('canvas');
             canvas.id = `canvas-${key}`;
-            
+
             canvasContainer.appendChild(canvas);
             wrapper.appendChild(header);
             wrapper.appendChild(canvasContainer);
@@ -562,18 +590,18 @@ class DashboardUI {
                         { label: 'LSL', data: [], borderColor: 'rgb(239, 68, 68)', borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0, fill: false }
                     ]
                 },
-                options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
                     plugins: { legend: { display: false } },
-                    scales: { 
-                        x: { 
-                            ticks: { 
-                                display: true, 
+                    scales: {
+                        x: {
+                            ticks: {
+                                display: true,
                                 maxRotation: 45
-                            } 
-                        } 
-                    } 
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -586,13 +614,13 @@ class DashboardUI {
             if (!chart) continue;
 
             const paramRecords = dataRecords.filter(r => r.part === part && r.parameter === key);
-            const displayRecords = paramRecords.slice(-30); 
-            
+            const displayRecords = paramRecords.slice(-30);
+
             let labels = displayRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
             let values = displayRecords.map(r => parseFloat(r.value));
             let uslData = Array(displayRecords.length).fill(spec.usl);
             let lslData = spec.lsl !== null ? Array(displayRecords.length).fill(spec.lsl) : [];
-            
+
             // ขึงเส้นขอบ LSL/USL
             if (displayRecords.length === 0) {
                 labels = ['(ว่าง)', '(รอข้อมูล)'];
@@ -610,17 +638,17 @@ class DashboardUI {
             chart.data.datasets[0].data = values;
             chart.data.datasets[1].data = uslData;
             chart.data.datasets[2].data = lslData;
-            
+
             if (spec.lsl !== null) {
                 const range = spec.usl - spec.lsl;
                 chart.options.scales.y.suggestedMin = spec.lsl - (range * 0.3);
                 chart.options.scales.y.suggestedMax = spec.usl + (range * 0.3);
             } else {
                 const minData = values.filter(v => v !== null).length > 0 ? Math.min(...values.filter(v => v !== null)) : 0;
-                chart.options.scales.y.suggestedMin = Math.max(minData - 1, 0); 
+                chart.options.scales.y.suggestedMin = Math.max(minData - 1, 0);
                 chart.options.scales.y.suggestedMax = spec.usl + (spec.usl * 0.05);
             }
-            
+
             chart.update();
         }
     }
@@ -635,7 +663,7 @@ class DashboardUI {
         if (activeWrapper) {
             activeWrapper.classList.remove('border', 'shadow-sm');
             activeWrapper.classList.add('border-blue-500', 'ring-4', 'ring-blue-200', 'shadow-lg');
-            
+
             if (shouldScroll) {
                 setTimeout(() => {
                     activeWrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -647,14 +675,14 @@ class DashboardUI {
     renderTable(dataRecords, currentConfig) {
         if(!this.elements.tbody) return;
         this.elements.tbody.innerHTML = '';
-        
+
         if(dataRecords.length === 0) {
             this.elements.tbody.innerHTML = '<tr><td colspan="4" class="px-2 py-4 text-center text-gray-400">ยังไม่มีข้อมูลสำหรับพารามิเตอร์นี้</td></tr>';
             return;
         }
 
         const recent = [...dataRecords].reverse().slice(0, 10);
-        
+
         recent.forEach(r => {
             let isOut = false;
             if(currentConfig.usl !== null && r.value > currentConfig.usl) isOut = true;
@@ -676,7 +704,7 @@ class DashboardUI {
     renderKPIs(dataRecords, currentConfig) {
         const values = dataRecords.map(r => parseFloat(r.value));
         this.elements.kpiCount.innerText = values.length;
-        
+
         if (values.length >= 2) {
             const stats = StatUtils.calculateCapability(values, currentConfig.usl, currentConfig.lsl);
             this.elements.kpiMean.innerText = stats.mean;
@@ -684,14 +712,14 @@ class DashboardUI {
             this.elements.kpiCpk.innerText = stats.cpk;
 
             this.elements.kpiCpkCard.className = 'p-4 rounded-xl shadow-sm border text-center transition-colors ';
-            
+
             if (stats.cpk === "-") {
                 this.elements.kpiCpkCard.classList.add('bg-gray-50', 'border-gray-200');
             } else {
                 const cpkVal = parseFloat(stats.cpk);
-                if (cpkVal < 1.0) this.elements.kpiCpkCard.classList.add('bg-red-100', 'border-red-300'); 
-                else if (cpkVal < 1.33) this.elements.kpiCpkCard.classList.add('bg-yellow-100', 'border-yellow-300'); 
-                else this.elements.kpiCpkCard.classList.add('bg-green-100', 'border-green-300'); 
+                if (cpkVal < 1.0) this.elements.kpiCpkCard.classList.add('bg-red-100', 'border-red-300');
+                else if (cpkVal < 1.33) this.elements.kpiCpkCard.classList.add('bg-yellow-100', 'border-yellow-300');
+                else this.elements.kpiCpkCard.classList.add('bg-green-100', 'border-green-300');
             }
         } else {
             this.elements.kpiMean.innerText = "-";
@@ -710,33 +738,45 @@ class AppController {
         this.db = dbService;
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0, name: '' };
-        this.machineAssignments = {}; 
+        this.machineAssignments = {};
     }
 
     async init() {
         this.bindEvents();
-        
+
         this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
         this.ui.setLoadingState(true);
 
-        const masterData = await this.db.getMasterData();
-        this.machineAssignments = masterData.machineAssignments || {};
-        
-        this.ui.populateOperators(masterData.operators || []);
-        this.ui.populateMachines(this.machineAssignments);
-        this.ui.populateParts(PART_SPECS);
+        try {
+            const masterData = await this.db.getMasterData();
+            this.machineAssignments = masterData.machineAssignments || {};
 
-        if (Object.keys(this.machineAssignments).length > 0) {
-            this.ui.elements.machineSelect.selectedIndex = 1; 
-            this.handleMachineChange();
+            this.ui.populateOperators(masterData.operators || []);
+            this.ui.populateMachines(this.machineAssignments);
+            this.ui.populateParts(PART_SPECS);
+
+            if (Object.keys(this.machineAssignments).length > 0) {
+                this.ui.elements.machineSelect.selectedIndex = 1;
+                this.handleMachineChange();
+            }
+
+            await this.refreshDashboard(false, false);
+        } catch (error) {
+            console.error("Error initializing dashboard:", error);
+            this.ui.populateOperators(DEFAULT_MASTER_DATA.operators);
+            this.ui.populateMachines(DEFAULT_MASTER_DATA.machineAssignments);
+            this.ui.populateParts(PART_SPECS);
+            this.machineAssignments = DEFAULT_MASTER_DATA.machineAssignments;
+        } finally {
+            this.ui.setLoadingState(false);
+            const pendingCount = this.db.pendingQueue ? this.db.pendingQueue.length : 0;
+            this.updateHeaderStatus(this.getDbStatusName(), pendingCount);
         }
+    }
 
-        await this.refreshDashboard(false, false);
-
-        this.ui.setLoadingState(false);
-        const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
-        const pendingCount = this.db.pendingQueue ? this.db.pendingQueue.length : 0;
-        this.updateHeaderStatus(dbName, pendingCount);
+    getDbStatusName() {
+        if (!AppConfig.USE_GOOGLE_SHEET) return "In-Memory (ทดสอบ)";
+        return this.db.isOnline === false ? "Google Sheets (ออฟไลน์/ใช้ข้อมูลในเครื่อง)" : "Google Sheets (เชื่อมต่อแล้ว)";
     }
 
     updateHeaderStatus(dbName, pendingCount) {
@@ -765,11 +805,11 @@ class AppController {
     handlePartChange() {
         const part = this.ui.elements.partSelect.value;
         const specs = PART_SPECS[part];
-        
+
         if(specs) {
             this.ui.setupAllCharts(part, specs);
             this.ui.renderParameterOptions(specs);
-            this.handleParamChange(); 
+            this.handleParamChange();
         } else {
             this.ui.elements.paramSelect.innerHTML = '<option value="">-- กรุณาเลือกรุ่นชิ้นงาน --</option>';
             this.ui.elements.specDisplay.innerHTML = '';
@@ -780,7 +820,7 @@ class AppController {
     handleParamChange() {
         const part = this.ui.elements.partSelect.value;
         const param = this.ui.elements.paramSelect.value;
-        
+
         if(!param || !PART_SPECS[part][param]) return;
 
         const spec = PART_SPECS[part][param];
@@ -789,7 +829,7 @@ class AppController {
 
         this.ui.updateSpecInfo(spec);
         this.ui.clearInput();
-        this.refreshDashboard(true, true); 
+        this.refreshDashboard(true, true);
     }
 
     async handleSubmit(e) {
@@ -804,14 +844,14 @@ class AppController {
         };
 
         await this.db.save(record);
-        
+
         this.ui.clearInput();
-        this.refreshDashboard(true, true); 
+        this.refreshDashboard(true, true);
     }
 
     async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
         let allRecords;
-        
+
         if (useLocalCache && this.db.getLocalData) {
             allRecords = this.db.getLocalData();
         } else {
@@ -832,7 +872,7 @@ class AppController {
         const filteredRecords = allRecords.filter(r => r.part === part && r.parameter === param);
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
-        
+
         // วาดกราฟระฆังคว่ำ
         this.ui.renderBellCurve(filteredRecords, this.currentConfig, part);
     }
@@ -847,15 +887,14 @@ window.onload = () => {
 
     const syncStatusCallback = (pendingCount) => {
         if (appInstance) {
-            const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
-            appInstance.updateHeaderStatus(dbName, pendingCount);
+            appInstance.updateHeaderStatus(appInstance.getDbStatusName(), pendingCount);
         }
     };
 
-    const databaseService = AppConfig.USE_GOOGLE_SHEET 
-        ? new GoogleSheetService(AppConfig.GOOGLE_SHEET_URL, syncStatusCallback) 
+    const databaseService = AppConfig.USE_GOOGLE_SHEET
+        ? new GoogleSheetService(AppConfig.GOOGLE_SHEET_URL, syncStatusCallback)
         : new InMemoryService();
-    
+
     appInstance = new AppController(databaseService, uiService);
     appInstance.init();
 };
