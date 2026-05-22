@@ -224,8 +224,8 @@ class DashboardUI {
             partSelect: document.getElementById('part-id'),
             paramSelect: document.getElementById('parameter-id'),
             specDisplay: document.getElementById('spec-display'),
-            measuredInput: document.getElementById('measured-value'),
-            chartsContainer: document.getElementById('charts-container'), 
+            measuredContainer: document.getElementById('measured-values-container'),
+            chartsContainer: document.getElementById('charts-container'),
             overviewPartTitle: document.getElementById('overview-part-title'),
             tbody: document.getElementById('data-table-body'),
             btnSubmit: document.getElementById('submit-btn'),
@@ -259,8 +259,24 @@ class DashboardUI {
     }
 
     clearInput() {
-        this.elements.measuredInput.value = '';
-        this.elements.measuredInput.focus();
+        const container = this.elements.measuredContainer;
+        if (!container) return;
+
+        // Reset back to exactly 3 rows
+        while (container.children.length > 3) {
+            container.removeChild(container.lastChild);
+        }
+        container.querySelectorAll('.measured-value-input').forEach((input, i) => {
+            input.value = '';
+            input.placeholder = `ชิ้นที่ ${i + 1}...`;
+        });
+        container.querySelector('.measured-value-input')?.focus();
+    }
+
+    getMeasuredValues() {
+        return Array.from(document.querySelectorAll('.measured-value-input'))
+            .map(el => el.value.trim())
+            .filter(v => v !== '' && !isNaN(parseFloat(v)));
     }
 
     populateOperators(operators) {
@@ -752,6 +768,39 @@ class AppController {
         this.ui.elements.partSelect.addEventListener('change', () => this.handlePartChange());
         this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
+        document.getElementById('add-value-btn').addEventListener('click', () => this.addMeasuredValueRow());
+    }
+
+    addMeasuredValueRow() {
+        const container = this.ui.elements.measuredContainer;
+        const index = container.children.length + 1;
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2';
+        row.innerHTML = `
+            <span class="text-xs text-gray-400 w-5 text-right shrink-0">${index}.</span>
+            <input type="number" step="0.001" placeholder="ชิ้นที่ ${index}..." class="measured-value-input flex-1 p-2 border border-gray-300 rounded-lg text-lg focus:ring-blue-500 focus:border-blue-500">
+            <button type="button" class="remove-value-btn text-gray-400 hover:text-red-500 shrink-0" title="ลบ">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        `;
+        row.querySelector('.remove-value-btn').addEventListener('click', () => {
+            container.removeChild(row);
+            this.renumberMeasuredRows();
+        });
+        container.appendChild(row);
+        row.querySelector('input').focus();
+    }
+
+    renumberMeasuredRows() {
+        const container = this.ui.elements.measuredContainer;
+        container.querySelectorAll('span').forEach((span, i) => {
+            span.textContent = `${i + 1}.`;
+        });
+        container.querySelectorAll('.measured-value-input').forEach((input, i) => {
+            input.placeholder = `ชิ้นที่ ${i + 1}...`;
+        });
     }
 
     handleMachineChange() {
@@ -795,18 +844,28 @@ class AppController {
     async handleSubmit(e) {
         e.preventDefault();
 
-        const record = {
+        const values = this.ui.getMeasuredValues();
+
+        if (values.length < 3) {
+            alert('กรุณากรอกค่าที่วัดได้อย่างน้อย 3 ค่า (งาน 3 ชิ้น)');
+            return;
+        }
+
+        const base = {
             machine: document.getElementById('machine-id').value,
             part: this.ui.elements.partSelect.value,
             parameter: this.ui.elements.paramSelect.value,
-            value: this.ui.elements.measuredInput.value,
             operator: document.getElementById('operator').value
         };
 
-        await this.db.save(record);
-        
+        this.ui.setLoadingState(true);
+        for (const value of values) {
+            await this.db.save({ ...base, value });
+        }
+        this.ui.setLoadingState(false);
+
         this.ui.clearInput();
-        this.refreshDashboard(true, true); 
+        this.refreshDashboard(true, true);
     }
 
     async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {

@@ -48,8 +48,27 @@
                     <select id="parameter-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"></select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1">ค่าที่วัดได้ (Measured Value)</label>
-                    <input type="number" step="0.001" id="measured-value" placeholder="ระบุตัวเลข..." required class="w-full p-2 border border-gray-300 rounded-lg text-lg focus:ring-blue-500 focus:border-blue-500">
+                    <label class="block text-sm font-medium text-gray-600 mb-1">ค่าที่วัดได้ (Measured Value) <span class="text-gray-400 font-normal">— ขั้นต่ำ 3 ค่า</span></label>
+                    <div id="measured-values-container" class="space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-gray-400 w-5 text-right shrink-0">1.</span>
+                            <input type="number" step="0.001" placeholder="ชิ้นที่ 1..." class="measured-value-input flex-1 p-2 border border-gray-300 rounded-lg text-lg focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-gray-400 w-5 text-right shrink-0">2.</span>
+                            <input type="number" step="0.001" placeholder="ชิ้นที่ 2..." class="measured-value-input flex-1 p-2 border border-gray-300 rounded-lg text-lg focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-gray-400 w-5 text-right shrink-0">3.</span>
+                            <input type="number" step="0.001" placeholder="ชิ้นที่ 3..." class="measured-value-input flex-1 p-2 border border-gray-300 rounded-lg text-lg focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                    </div>
+                    <button type="button" id="add-value-btn" class="mt-2 text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                        </svg>
+                        เพิ่มค่า
+                    </button>
                     <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100"></p>
                 </div>
                 <div>
