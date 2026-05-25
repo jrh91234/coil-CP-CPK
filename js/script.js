@@ -870,28 +870,31 @@ class AppController {
 
     async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
         let allRecords;
-        
+
         if (useLocalCache && this.db.getLocalData) {
             allRecords = this.db.getLocalData();
         } else {
             allRecords = await this.db.getAll();
         }
 
+        const machine = this.ui.elements.machineSelect.value;
         const part = this.ui.elements.partSelect.value;
         const param = this.ui.elements.paramSelect.value;
 
         if(!part || !PART_SPECS[part]) return;
 
-        this.ui.updateAllCharts(allRecords, part, PART_SPECS[part]);
+        const machineRecords = machine ? allRecords.filter(r => r.machine === machine) : allRecords;
+
+        this.ui.updateAllCharts(machineRecords, part, PART_SPECS[part]);
 
         if(!param) return;
 
         this.ui.highlightChart(param, shouldScrollToChart);
 
-        const filteredRecords = allRecords.filter(r => r.part === part && r.parameter === param);
+        const filteredRecords = machineRecords.filter(r => r.part === part && r.parameter === param);
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
-        
+
         // วาดกราฟระฆังคว่ำ
         this.ui.renderBellCurve(filteredRecords, this.currentConfig, part);
     }
