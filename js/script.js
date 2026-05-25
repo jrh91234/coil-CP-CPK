@@ -86,6 +86,17 @@ class StatUtils {
             cpk: cpk !== null ? cpk.toFixed(2) : "-"
         };
     }
+
+    // แปลง "dd/MM/yyyy HH:mm:ss" → Date object
+    static parseTimestamp(ts) {
+        if (!ts) return null;
+        const parts = ts.split(' ');
+        const dateParts = parts[0].split('/');
+        if (dateParts.length < 3) return null;
+        const [dd, MM, yyyy] = dateParts;
+        const time = parts[1] || '00:00:00';
+        return new Date(`${yyyy}-${MM.padStart(2,'0')}-${dd.padStart(2,'0')}T${time}`);
+    }
 }
 
 // -----------------------------------------------------
@@ -137,9 +148,12 @@ class GoogleSheetService {
         return { success: true };
     }
 
-    async getAll() {
+    async getAll(from = null, to = null) {
         try {
-            const response = await fetch(`${this.url}?action=get`);
+            let url = `${this.url}?action=get`;
+            if (from) url += `&from=${from.toISOString().split('T')[0]}`;
+            if (to) url += `&to=${to.toISOString().split('T')[0]}`;
+            const response = await fetch(url);
             const result = await response.json();
             const serverData = result.data || [];
 
@@ -726,11 +740,14 @@ class AppController {
         this.db = dbService;
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0, name: '' };
-        this.machineAssignments = {}; 
+        this.machineAssignments = {};
+        this.dateFilter = { from: null, to: null };
     }
 
     async init() {
         this.bindEvents();
+        this._applyPreset('30');
+        this._setActivePresetBtn('30');
         
         this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
         this.ui.setLoadingState(true);
@@ -769,6 +786,81 @@ class AppController {
         this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
         document.getElementById('add-value-btn').addEventListener('click', () => this.addMeasuredValueRow());
+        document.querySelectorAll('.date-preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this._setActivePresetBtn(btn.dataset.preset);
+                this.setDatePreset(btn.dataset.preset);
+            });
+        });
+        document.getElementById('date-from').addEventListener('change', () => this.handleCustomDateChange());
+        document.getElementById('date-to').addEventListener('change', () => this.handleCustomDateChange());
+    }
+
+    _applyPreset(preset) {
+        const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        let from = null;
+
+        if (preset === 'all') {
+            this.dateFilter = { from: null, to: null };
+        } else if (preset === 'month') {
+            from = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0);
+            this.dateFilter = { from, to: today };
+        } else {
+            const days = parseInt(preset);
+            from = new Date(today);
+            from.setDate(from.getDate() - days + 1);
+            from.setHours(0, 0, 0, 0);
+            this.dateFilter = { from, to: today };
+        }
+
+        const fromInput = document.getElementById('date-from');
+        const toInput = document.getElementById('date-to');
+        if (fromInput) fromInput.value = from ? this._toInputDate(from) : '';
+        if (toInput) toInput.value = preset !== 'all' ? this._toInputDate(today) : '';
+    }
+
+    setDatePreset(preset) {
+        this._applyPreset(preset);
+        this.refreshDashboard(false, false);
+    }
+
+    handleCustomDateChange() {
+        const fromVal = document.getElementById('date-from').value;
+        const toVal = document.getElementById('date-to').value;
+        this.dateFilter = {
+            from: fromVal ? new Date(fromVal + 'T00:00:00') : null,
+            to: toVal ? new Date(toVal + 'T23:59:59') : null
+        };
+        this._setActivePresetBtn(null);
+        this.refreshDashboard(false, false);
+    }
+
+    _toInputDate(date) {
+        return date.toISOString().split('T')[0];
+    }
+
+    _setActivePresetBtn(activePreset) {
+        document.querySelectorAll('.date-preset-btn').forEach(btn => {
+            const isActive = btn.dataset.preset === activePreset;
+            btn.className = `date-preset-btn px-3 py-1 text-xs rounded-full border ${
+                isActive
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                    : 'border-gray-300 text-gray-600'
+            }`;
+        });
+    }
+
+    applyDateFilter(records) {
+        const { from, to } = this.dateFilter;
+        if (!from && !to) return records;
+        return records.filter(r => {
+            const d = StatUtils.parseTimestamp(r.timestamp);
+            if (!d || isNaN(d.getTime())) return true;
+            if (from && d < from) return false;
+            if (to && d > to) return false;
+            return true;
+        });
     }
 
     addMeasuredValueRow() {
@@ -874,7 +966,7 @@ class AppController {
         if (useLocalCache && this.db.getLocalData) {
             allRecords = this.db.getLocalData();
         } else {
-            allRecords = await this.db.getAll();
+            allRecords = await this.db.getAll(this.dateFilter.from, this.dateFilter.to);
         }
 
         const machine = this.ui.elements.machineSelect.value;
@@ -884,18 +976,18 @@ class AppController {
         if(!part || !PART_SPECS[part]) return;
 
         const machineRecords = machine ? allRecords.filter(r => r.machine === machine) : allRecords;
+        const dateFilteredRecords = this.applyDateFilter(machineRecords);
 
-        this.ui.updateAllCharts(machineRecords, part, PART_SPECS[part]);
+        this.ui.updateAllCharts(dateFilteredRecords, part, PART_SPECS[part]);
 
         if(!param) return;
 
         this.ui.highlightChart(param, shouldScrollToChart);
 
-        const filteredRecords = machineRecords.filter(r => r.part === part && r.parameter === param);
+        const filteredRecords = dateFilteredRecords.filter(r => r.part === part && r.parameter === param);
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
 
-        // วาดกราฟระฆังคว่ำ
         this.ui.renderBellCurve(filteredRecords, this.currentConfig, part);
     }
 }

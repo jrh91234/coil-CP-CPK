@@ -73,22 +73,28 @@ class SheetRepository {
     ]);
   }
 
-  getAllRecords() {
+  getAllRecords(from = null, to = null) {
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
-    
+
     if (values.length <= 1) return [];
-    
-    const rawData = values.slice(1);
-    
-    return rawData.map(row => ({
-      timestamp: ResponseHelper.formatDate(new Date(row[0])),
-      machine: row[1],
-      part: row[2],
-      parameter: row[3],
-      operator: row[4],
-      value: row[5]
-    }));
+
+    return values.slice(1)
+      .filter(row => {
+        if (!from && !to) return true;
+        const d = new Date(row[0]);
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      })
+      .map(row => ({
+        timestamp: ResponseHelper.formatDate(new Date(row[0])),
+        machine: row[1],
+        part: row[2],
+        parameter: row[3],
+        operator: row[4],
+        value: row[5]
+      }));
   }
 }
 
@@ -152,10 +158,14 @@ function doGet(e) {
     }
 
     // ----------------------------------------------------
-    // ดึงข้อมูลประวัติ History ปกติ
+    // ดึงข้อมูลประวัติ History (กรองตามช่วงวันที่ถ้ามี)
     // ----------------------------------------------------
     const repo = new SheetRepository();
-    const records = repo.getAllRecords();
+    const fromStr = e.parameter && e.parameter.from ? e.parameter.from : null;
+    const toStr   = e.parameter && e.parameter.to   ? e.parameter.to   : null;
+    const from = fromStr ? new Date(fromStr + 'T00:00:00') : null;
+    const to   = toStr   ? new Date(toStr   + 'T23:59:59') : null;
+    const records = repo.getAllRecords(from, to);
     return ResponseHelper.success(records);
     
   } catch (error) {
