@@ -127,6 +127,25 @@
                 <span id="overview-part-title" class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold"></span>
             </div>
 
+            <!-- Date Range Filter -->
+            <div class="bg-white p-3 rounded-xl shadow-sm border flex flex-wrap items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <span class="text-sm font-medium text-gray-600 shrink-0">ช่วงเวลา:</span>
+                <div class="flex gap-1 flex-wrap">
+                    <button class="date-preset-btn px-3 py-1 text-xs rounded-full border font-medium transition-colors" data-days="0">วันนี้</button>
+                    <button class="date-preset-btn px-3 py-1 text-xs rounded-full border font-medium transition-colors" data-days="7">7 วัน</button>
+                    <button class="date-preset-btn px-3 py-1 text-xs rounded-full border font-medium transition-colors" data-days="30">30 วัน</button>
+                    <button class="date-preset-btn active-preset px-3 py-1 text-xs rounded-full border font-medium transition-colors bg-blue-600 text-white border-blue-600" data-days="-1">ทั้งหมด</button>
+                </div>
+                <div class="flex items-center gap-1 ml-auto">
+                    <input type="date" id="date-from" class="text-xs p-1.5 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    <span class="text-gray-400 text-xs">—</span>
+                    <input type="date" id="date-to" class="text-xs p-1.5 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                </div>
+            </div>
+
             <!-- KPI Cards -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
