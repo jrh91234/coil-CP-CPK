@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPC Dashboard - Cp/Cpk Management</title>
-    
+
     <!-- ดึง Tailwind CSS และ Chart.js มาใช้งาน -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
+
     <!-- แก้ไขพาธชี้ไปที่โฟลเดอร์ css -->
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -28,7 +28,7 @@
     </nav>
 
     <main class="container mx-auto p-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-6 flex-grow">
-        
+
         <!-- ส่วนกรอกข้อมูล -->
         <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit lg:sticky lg:top-4 self-start">
             <h2 class="text-lg font-bold mb-4 text-gray-700 border-b pb-2">บันทึกข้อมูลการวัด (Data Entry)</h2>
@@ -47,7 +47,9 @@
                     <label class="block text-sm font-medium text-gray-600 mb-1">จุดตรวจสอบ (Parameter)</label>
                     <select id="parameter-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"></select>
                 </div>
-                <div>
+
+                <!-- Numeric input section (ซ่อน/แสดงตามประเภท parameter) -->
+                <div id="numeric-input-section">
                     <label class="block text-sm font-medium text-gray-600 mb-1">ค่าที่วัดได้ (Measured Value) <span class="text-gray-400 font-normal">— ขั้นต่ำ 3 ค่า</span></label>
                     <div id="measured-values-container" class="space-y-2">
                         <div class="flex items-center gap-2">
@@ -69,8 +71,27 @@
                         </svg>
                         เพิ่มค่า
                     </button>
-                    <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100"></p>
                 </div>
+
+                <!-- Gauge input section (ซ่อน/แสดงเฉพาะ Item 6) -->
+                <div id="gauge-input-section" class="hidden">
+                    <label class="block text-sm font-medium text-gray-600 mb-2">ผลการตรวจสอบ Gauge</label>
+                    <div class="flex gap-3">
+                        <button type="button" id="gauge-pass-btn"
+                            class="flex-1 py-4 px-4 rounded-lg border-2 font-bold text-lg border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50 transition-colors">
+                            ✓ ผ่าน
+                        </button>
+                        <button type="button" id="gauge-fail-btn"
+                            class="flex-1 py-4 px-4 rounded-lg border-2 font-bold text-lg border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50 transition-colors">
+                            ✗ ไม่ผ่าน
+                        </button>
+                    </div>
+                    <input type="hidden" id="gauge-result" value="">
+                    <p class="text-center mt-2 text-xs text-gray-400">บันทึก 1 รายการต่อ 1 ครั้งตรวจ</p>
+                </div>
+
+                <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100"></p>
+
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">พนักงาน (Operator)</label>
                     <select id="operator" required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
@@ -81,7 +102,7 @@
                     บันทึกข้อมูล (Save)
                 </button>
             </form>
-            
+
             <!-- ตารางข้อมูลย้ายมาอยู่ใต้ฟอร์มบันทึก เพื่อประหยัดพื้นที่ให้กราฟ -->
             <div class="mt-6 border-t pt-4 overflow-x-auto">
                 <h3 class="text-sm font-bold text-gray-700 mb-2">ประวัติค่าที่วัดได้ (ล่าสุด)</h3>
@@ -100,28 +121,28 @@
 
         <!-- ส่วน Dashboard Overview -->
         <div class="lg:col-span-2 space-y-6">
-            
+
             <div class="flex items-center justify-between border-b pb-2">
                 <h2 class="text-xl font-bold text-gray-800">ภาพรวมคุณภาพ (Quality Overview)</h2>
                 <span id="overview-part-title" class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold"></span>
             </div>
 
-            <!-- KPI Cards ของพารามิเตอร์ที่ถูกเลือกปัจจุบัน -->
+            <!-- KPI Cards -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
                     <p class="text-sm text-gray-500">จำนวน (n)</p>
                     <p id="kpi-count" class="text-2xl font-bold text-gray-800">0</p>
                 </div>
                 <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
-                    <p class="text-sm text-gray-500">ค่าเฉลี่ย (Mean)</p>
+                    <p id="kpi-mean-label" class="text-sm text-gray-500">ค่าเฉลี่ย (Mean)</p>
                     <p id="kpi-mean" class="text-2xl font-bold text-gray-800">-</p>
                 </div>
                 <div class="bg-white p-4 rounded-xl shadow-sm border text-center">
-                    <p class="text-sm text-gray-500">Cp</p>
+                    <p id="kpi-cp-label" class="text-sm text-gray-500">Cp</p>
                     <p id="kpi-cp" class="text-2xl font-bold text-blue-600">-</p>
                 </div>
                 <div id="kpi-cpk-card" class="bg-white p-4 rounded-xl shadow-sm border text-center transition-colors">
-                    <p class="text-sm text-gray-500">Cpk</p>
+                    <p id="kpi-cpk-label" class="text-sm text-gray-500">Cpk</p>
                     <p id="kpi-cpk" class="text-2xl font-bold text-gray-800">-</p>
                 </div>
             </div>
@@ -130,7 +151,7 @@
             <div id="charts-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- กราฟแต่ละตัวจะถูกสร้างอัตโนมัติด้วย JavaScript ตรงนี้ -->
             </div>
-            
+
         </div>
     </main>
 
