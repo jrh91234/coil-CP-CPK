@@ -80,6 +80,28 @@ class StatUtils {
         return `${y}-${m}-${day}`;
     }
 
+    // Standard normal CDF (Abramowitz & Stegun approximation)
+    static normalCDF(z) {
+        const t = 1 / (1 + 0.2316419 * Math.abs(z));
+        const d = 0.3989423 * Math.exp(-z * z / 2);
+        const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.7814779 + t * (-1.8212560 + t * 1.3302744))));
+        return z > 0 ? 1 - p : p;
+    }
+
+    // คำนวณ DPMO จาก mean, sigma และ spec limits
+    static calcDPMO(mean, sigma, usl, lsl) {
+        if (sigma <= 0) return 0;
+        let pDefect = 0;
+        if (usl !== null) pDefect += 1 - StatUtils.normalCDF((usl - mean) / sigma);
+        if (lsl !== null) pDefect += StatUtils.normalCDF((lsl - mean) / sigma);
+        return Math.round(Math.min(pDefect, 1) * 1_000_000);
+    }
+
+    // Sigma Level จาก Cpk (short-term)
+    static sigmaLevel(cpk) {
+        return (parseFloat(cpk) * 3).toFixed(2);
+    }
+
     static calculateCapability(dataArray, usl, lsl) {
         if (dataArray.length < 2) return { cp: "-", cpk: "-", mean: "-" };
 
@@ -228,6 +250,73 @@ class GoogleSheetService {
 }
 
 // -----------------------------------------------------
+// Sigma Zone Plugin (Chart.js custom plugin)
+// วาด background zones ±1σ/±2σ/±3σ และ label บนกราฟ bell curve
+// -----------------------------------------------------
+const sigmaZonePlugin = {
+    id: 'sigmaZones',
+    beforeDraw(chart) {
+        const opts = chart.options.plugins.sigmaZones;
+        if (!opts || !opts.enabled || !opts.sigma || opts.sigma <= 0) return;
+
+        const { ctx, scales: { x, y } } = chart;
+        const { mean, sigma } = opts;
+
+        // Zone backgrounds: center → outer
+        const zones = [
+            { from: mean - sigma,     to: mean + sigma,     color: 'rgba(34,197,94,0.10)' },
+            { from: mean - 2 * sigma, to: mean - sigma,     color: 'rgba(234,179,8,0.12)' },
+            { from: mean + sigma,     to: mean + 2 * sigma, color: 'rgba(234,179,8,0.12)' },
+            { from: mean - 3 * sigma, to: mean - 2 * sigma, color: 'rgba(239,68,68,0.10)' },
+            { from: mean + 2 * sigma, to: mean + 3 * sigma, color: 'rgba(239,68,68,0.10)' },
+        ];
+
+        zones.forEach(({ from, to, color }) => {
+            const left  = Math.max(x.getPixelForValue(from), x.left);
+            const right = Math.min(x.getPixelForValue(to),   x.right);
+            if (left >= right) return;
+            ctx.save();
+            ctx.fillStyle = color;
+            ctx.fillRect(left, y.top, right - left, y.bottom - y.top);
+            ctx.restore();
+        });
+
+        // Sigma lines + labels
+        const lines = [
+            { val: mean - 3 * sigma, label: '−3σ', color: 'rgba(239,68,68,0.7)' },
+            { val: mean - 2 * sigma, label: '−2σ', color: 'rgba(234,179,8,0.8)' },
+            { val: mean - sigma,     label: '−1σ', color: 'rgba(34,197,94,0.8)' },
+            { val: mean,             label:  'μ',  color: 'rgba(99,102,241,0.9)' },
+            { val: mean + sigma,     label: '+1σ', color: 'rgba(34,197,94,0.8)' },
+            { val: mean + 2 * sigma, label: '+2σ', color: 'rgba(234,179,8,0.8)' },
+            { val: mean + 3 * sigma, label: '+3σ', color: 'rgba(239,68,68,0.7)' },
+        ];
+
+        lines.forEach(({ val, label, color }) => {
+            const px = x.getPixelForValue(val);
+            if (px < x.left || px > x.right) return;
+
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.setLineDash(label === 'μ' ? [6, 3] : [4, 4]);
+            ctx.lineWidth = label === 'μ' ? 2 : 1.5;
+            ctx.beginPath();
+            ctx.moveTo(px, y.top);
+            ctx.lineTo(px, y.bottom);
+            ctx.stroke();
+
+            // Label inside top of chart
+            ctx.fillStyle = color;
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.setLineDash([]);
+            ctx.fillText(label, px, y.top + 12);
+            ctx.restore();
+        });
+    }
+};
+
+// -----------------------------------------------------
 // 4. VIEW (UI Management)
 // -----------------------------------------------------
 class DashboardUI {
@@ -235,6 +324,7 @@ class DashboardUI {
         this.chartInstances = {};
         this.bellChartInstance = null;
         this.bellCurveMode = null; // 'numeric' | 'gauge'
+        this.showSixSigma = false;
         this.elements = {
             machineSelect: document.getElementById('machine-id'),
             partSelect: document.getElementById('part-id'),
@@ -402,16 +492,65 @@ class DashboardUI {
         container.innerHTML = `
             <div class="flex justify-between items-center mb-4 border-b pb-2">
                 <h3 id="bell-curve-title" class="text-md font-bold text-gray-700">การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)</h3>
-                <span id="bell-chart-title" class="text-xs bg-purple-100 text-purple-800 px-3 py-1 rounded-full font-bold"></span>
+                <div class="flex items-center gap-2">
+                    <span id="bell-chart-title" class="text-xs bg-purple-100 text-purple-800 px-3 py-1 rounded-full font-bold"></span>
+                    <button id="six-sigma-btn"
+                        class="text-xs px-3 py-1 rounded-full border font-medium transition-colors border-gray-300 text-gray-500 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-600">
+                        6σ View
+                    </button>
+                </div>
             </div>
             <div class="relative h-[300px] w-full">
                 <canvas id="bellCurveCanvas"></canvas>
+            </div>
+            <div id="sigma-stats-panel" class="hidden mt-3 pt-3 border-t grid grid-cols-4 gap-3 text-center">
+                <div class="bg-indigo-50 rounded-lg p-2">
+                    <p class="text-xs text-indigo-500 font-medium">Sigma Level</p>
+                    <p id="stat-sigma-level" class="text-xl font-bold text-indigo-700">-</p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-2">
+                    <p class="text-xs text-gray-500 font-medium">DPMO</p>
+                    <p id="stat-dpmo" class="text-xl font-bold text-gray-700">-</p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-2">
+                    <p class="text-xs text-gray-500 font-medium">Yield (%)</p>
+                    <p id="stat-yield" class="text-xl font-bold text-gray-700">-</p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-2">
+                    <p class="text-xs text-gray-500 font-medium">เป้าหมาย 6σ</p>
+                    <p id="stat-target" class="text-sm font-bold text-gray-500">Cpk ≥ 2.00</p>
+                </div>
             </div>
         `;
 
         const kpiContainer = this.elements.kpiCpkCard?.parentElement;
         if (kpiContainer && kpiContainer.parentNode) {
             kpiContainer.parentNode.insertBefore(container, kpiContainer.nextSibling);
+        }
+
+        // bind toggle button
+        document.getElementById('six-sigma-btn')?.addEventListener('click', () => {
+            this.showSixSigma = !this.showSixSigma;
+            this._applySixSigmaToggle();
+        });
+    }
+
+    _applySixSigmaToggle() {
+        const btn = document.getElementById('six-sigma-btn');
+        const panel = document.getElementById('sigma-stats-panel');
+
+        if (this.showSixSigma) {
+            btn.className = 'text-xs px-3 py-1 rounded-full border font-medium transition-colors bg-indigo-600 text-white border-indigo-600';
+            panel?.classList.remove('hidden');
+        } else {
+            btn.className = 'text-xs px-3 py-1 rounded-full border font-medium transition-colors border-gray-300 text-gray-500 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-600';
+            panel?.classList.add('hidden');
+        }
+
+        // toggle plugin on existing chart
+        if (this.bellChartInstance && this.bellCurveMode === 'numeric') {
+            this.bellChartInstance.options.plugins.sigmaZones.enabled = this.showSixSigma;
+            this.bellChartInstance.update();
         }
     }
 
@@ -424,6 +563,7 @@ class DashboardUI {
 
         const ctx = document.getElementById('bellCurveCanvas').getContext('2d');
         this.bellChartInstance = new Chart(ctx, {
+            plugins: [sigmaZonePlugin],
             data: {
                 datasets: [
                     {
@@ -496,7 +636,8 @@ class DashboardUI {
                 },
                 plugins: {
                     legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10 } },
-                    tooltip: { mode: 'index', intersect: false }
+                    tooltip: { mode: 'index', intersect: false },
+                    sigmaZones: { enabled: false, mean: 0, sigma: 0 }
                 },
                 interaction: { mode: 'nearest', axis: 'x', intersect: false }
             }
@@ -654,7 +795,59 @@ class DashboardUI {
         this.bellChartInstance.options.scales.x.max = maxVal;
         this.bellChartInstance.options.scales.y.max = maxY;
 
+        // อัปเดต sigma zone plugin
+        this.bellChartInstance.options.plugins.sigmaZones.mean = mean;
+        this.bellChartInstance.options.plugins.sigmaZones.sigma = sigma;
+        this.bellChartInstance.options.plugins.sigmaZones.enabled = this.showSixSigma;
+
         this.bellChartInstance.update();
+
+        // อัปเดต sigma stats panel
+        this._updateSigmaStatsPanel(mean, sigma, currentConfig);
+    }
+
+    _updateSigmaStatsPanel(mean, sigma, config) {
+        const panel = document.getElementById('sigma-stats-panel');
+        if (!panel) return;
+
+        const stats = StatUtils.calculateCapability(
+            [], // ใช้ mean/sigma ที่คำนวณแล้ว
+            config.usl, config.lsl
+        );
+
+        // คำนวณ Cpk จาก mean/sigma โดยตรง
+        let cpk = null;
+        if (sigma > 0) {
+            const vals = [];
+            if (config.usl !== null) vals.push((config.usl - mean) / (3 * sigma));
+            if (config.lsl !== null) vals.push((mean - config.lsl) / (3 * sigma));
+            if (vals.length > 0) cpk = Math.min(...vals);
+        }
+
+        const dpmo = StatUtils.calcDPMO(mean, sigma, config.usl, config.lsl);
+        const yieldPct = ((1 - dpmo / 1_000_000) * 100).toFixed(4);
+        const sigmaLvl = cpk !== null ? (cpk * 3).toFixed(2) : '-';
+        const sigmaNum = cpk !== null ? parseFloat(sigmaLvl) : 0;
+
+        const sigmaEl = document.getElementById('stat-sigma-level');
+        const dpmoEl = document.getElementById('stat-dpmo');
+        const yieldEl = document.getElementById('stat-yield');
+        const targetEl = document.getElementById('stat-target');
+
+        if (sigmaEl) {
+            sigmaEl.innerText = cpk !== null ? `${sigmaLvl}σ` : '-';
+            sigmaEl.className = sigmaNum >= 6 ? 'text-xl font-bold text-green-600'
+                              : sigmaNum >= 5 ? 'text-xl font-bold text-blue-600'
+                              : sigmaNum >= 4 ? 'text-xl font-bold text-yellow-600'
+                              : 'text-xl font-bold text-red-600';
+        }
+        if (dpmoEl) dpmoEl.innerText = cpk !== null ? dpmo.toLocaleString() : '-';
+        if (yieldEl) yieldEl.innerText = cpk !== null ? `${yieldPct}%` : '-';
+        if (targetEl) {
+            const cpkVal = cpk !== null ? cpk.toFixed(2) : '-';
+            const ok = cpk !== null && cpk >= 2.0;
+            targetEl.innerHTML = `Cpk ≥ 2.00<br/><span class="${ok ? 'text-green-600' : 'text-red-500'} font-bold">${ok ? '✓ ผ่าน' : `✗ ปัจจุบัน ${cpkVal}`}</span>`;
+        }
     }
 
     _updateGaugePChart(dataRecords, currentConfig, partName) {
