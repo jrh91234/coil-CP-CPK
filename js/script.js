@@ -57,6 +57,29 @@ class StatUtils {
         return Math.sqrt(variance);
     }
 
+    // แปลง timestamp จาก toLocaleString('th-TH') → Date object
+    static parseThaiDate(timestamp) {
+        if (!timestamp) return null;
+        try {
+            const clean = String(timestamp).replace(',', '').trim();
+            const datePart = clean.split(' ')[0];
+            const parts = datePart.split('/');
+            if (parts.length !== 3) return null;
+            let [d, m, y] = parts.map(Number);
+            if (y > 2500) y -= 543; // Buddhist Era → CE
+            const result = new Date(y, m - 1, d);
+            return isNaN(result.getTime()) ? null : result;
+        } catch { return null; }
+    }
+
+    static dateToISO(d) {
+        if (!d) return '';
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    }
+
     static calculateCapability(dataArray, usl, lsl) {
         if (dataArray.length < 2) return { cp: "-", cpk: "-", mean: "-" };
 
@@ -830,25 +853,10 @@ class DashboardUI {
                     }
                 }
             } else {
-                // Numeric: existing line chart logic
-                const displayRecords = paramRecords.slice(-30);
-
-                let labels = displayRecords.map(r => r.timestamp.split(' ')[1] || r.timestamp);
-                let values = displayRecords.map(r => parseFloat(r.value));
-                let uslData = Array(displayRecords.length).fill(spec.usl);
-                let lslData = spec.lsl !== null ? Array(displayRecords.length).fill(spec.lsl) : [];
-
-                if (displayRecords.length === 0) {
-                    labels = ['(ว่าง)', '(รอข้อมูล)'];
-                    values = [null, null];
-                    uslData = [spec.usl, spec.usl];
-                    if (spec.lsl !== null) lslData = [spec.lsl, spec.lsl];
-                } else if (displayRecords.length === 1) {
-                    labels = ['เริ่มต้น', labels[0]];
-                    values = [null, values[0]];
-                    uslData = [spec.usl, spec.usl];
-                    if (spec.lsl !== null) lslData = [spec.lsl, spec.lsl];
-                }
+                // Numeric: smart daily-vs-individual aggregation
+                const { labels, values } = DashboardUI._buildNumericChartData(paramRecords);
+                const uslData = Array(labels.length).fill(spec.usl);
+                const lslData = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
 
                 chart.data.labels = labels;
                 chart.data.datasets[0].data = values;
@@ -860,13 +868,68 @@ class DashboardUI {
                     chart.options.scales.y.suggestedMin = spec.lsl - (range * 0.3);
                     chart.options.scales.y.suggestedMax = spec.usl + (range * 0.3);
                 } else {
-                    const minData = values.filter(v => v !== null).length > 0 ? Math.min(...values.filter(v => v !== null)) : 0;
+                    const validVals = values.filter(v => v !== null);
+                    const minData = validVals.length > 0 ? Math.min(...validVals) : 0;
                     chart.options.scales.y.suggestedMin = Math.max(minData - 1, 0);
                     chart.options.scales.y.suggestedMax = spec.usl + (spec.usl * 0.05);
                 }
 
                 chart.update();
             }
+        }
+    }
+
+    // สร้าง labels + values สำหรับ numeric chart แบบ smart:
+    // - ถ้าข้ามวัน → group รายวัน (daily mean)
+    // - ถ้าวันเดียวกัน → แสดงรายครั้งพร้อม label เวลา
+    static _buildNumericChartData(records) {
+        if (records.length === 0) {
+            return { labels: ['(ว่าง)', '(รอข้อมูล)'], values: [null, null] };
+        }
+
+        // ตรวจสอบว่าข้ามวันหรือไม่
+        const dates = records.map(r => StatUtils.parseThaiDate(r.timestamp));
+        const isoSet = new Set(dates.map(d => d ? StatUtils.dateToISO(d) : '?'));
+        const spansMultipleDays = isoSet.size > 1;
+
+        if (spansMultipleDays) {
+            // กลุ่มรายวัน: คำนวณค่าเฉลี่ยต่อวัน
+            const grouped = {};
+            records.forEach(r => {
+                const d = StatUtils.parseThaiDate(r.timestamp);
+                const key = d ? StatUtils.dateToISO(d) : '?';
+                if (!grouped[key]) grouped[key] = [];
+                const v = parseFloat(r.value);
+                if (!isNaN(v)) grouped[key].push(v);
+            });
+
+            const sortedDays = Object.keys(grouped).filter(k => k !== '?').sort();
+            const labels = sortedDays.map(iso => {
+                const [, m, d] = iso.split('-');
+                return `${parseInt(d)}/${parseInt(m)}`;
+            });
+            const values = sortedDays.map(day => {
+                const arr = grouped[day];
+                return arr.length > 0 ? parseFloat(StatUtils.mean(arr).toFixed(3)) : null;
+            });
+
+            if (values.length === 1) {
+                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values] };
+            }
+            return { labels, values };
+        } else {
+            // รายครั้ง: แสดง HH:MM พร้อมข้อมูลล่าสุด 30 จุด
+            const displayRecords = records.slice(-30);
+            const labels = displayRecords.map(r => {
+                const timePart = String(r.timestamp).replace(',', '').trim().split(' ')[1] || r.timestamp;
+                return timePart.substring(0, 5); // HH:MM
+            });
+            const values = displayRecords.map(r => parseFloat(r.value));
+
+            if (displayRecords.length === 1) {
+                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values] };
+            }
+            return { labels, values };
         }
     }
 
@@ -1015,6 +1078,59 @@ class AppController {
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0, name: '' };
         this.machineAssignments = {};
+        this.activeDatePreset = -1; // -1 = ทั้งหมด
+    }
+
+    // ---- Date Filter Helpers ----
+
+    _filterByDateRange(records) {
+        const fromVal = document.getElementById('date-from')?.value;
+        const toVal = document.getElementById('date-to')?.value;
+        if (!fromVal && !toVal) return records;
+
+        return records.filter(r => {
+            const d = StatUtils.parseThaiDate(r.timestamp);
+            if (!d) return true;
+            const iso = StatUtils.dateToISO(d);
+            if (fromVal && iso < fromVal) return false;
+            if (toVal && iso > toVal) return false;
+            return true;
+        });
+    }
+
+    _setDatePreset(days) {
+        this.activeDatePreset = days;
+        const dateFrom = document.getElementById('date-from');
+        const dateTo = document.getElementById('date-to');
+        const today = new Date();
+        const toISO = StatUtils.dateToISO(today);
+
+        if (days === -1) {
+            dateFrom.value = '';
+            dateTo.value = '';
+        } else if (days === 0) {
+            dateFrom.value = toISO;
+            dateTo.value = toISO;
+        } else {
+            const fromDate = new Date(today);
+            fromDate.setDate(today.getDate() - days + 1);
+            dateFrom.value = StatUtils.dateToISO(fromDate);
+            dateTo.value = toISO;
+        }
+
+        this._updatePresetUI();
+        this.refreshDashboard(false, false);
+    }
+
+    _updatePresetUI() {
+        document.querySelectorAll('.date-preset-btn').forEach(btn => {
+            const days = parseInt(btn.dataset.days);
+            if (days === this.activeDatePreset) {
+                btn.className = 'date-preset-btn px-3 py-1 text-xs rounded-full border font-medium transition-colors bg-blue-600 text-white border-blue-600';
+            } else {
+                btn.className = 'date-preset-btn px-3 py-1 text-xs rounded-full border font-medium transition-colors border-gray-300 text-gray-600 hover:bg-gray-100';
+            }
+        });
     }
 
     async init() {
@@ -1075,6 +1191,26 @@ class AppController {
             document.getElementById('gauge-result').value = 'FAIL';
             document.getElementById('gauge-fail-btn').className = failSelected;
             document.getElementById('gauge-pass-btn').className = passIdle;
+        });
+
+        // Date range filter
+        document.querySelectorAll('.date-preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const days = parseInt(btn.dataset.days);
+                this._setDatePreset(days);
+            });
+        });
+
+        document.getElementById('date-from').addEventListener('change', () => {
+            this.activeDatePreset = null;
+            this._updatePresetUI();
+            this.refreshDashboard(false, false);
+        });
+
+        document.getElementById('date-to').addEventListener('change', () => {
+            this.activeDatePreset = null;
+            this._updatePresetUI();
+            this.refreshDashboard(false, false);
         });
     }
 
@@ -1220,15 +1356,17 @@ class AppController {
 
         if (!part || !PART_SPECS[part]) return;
 
+        // กรองตามเครื่องจักรและช่วงวันที่
         const machineRecords = machine ? allRecords.filter(r => r.machine === machine) : allRecords;
+        const dateFilteredRecords = this._filterByDateRange(machineRecords);
 
-        this.ui.updateAllCharts(machineRecords, part, PART_SPECS[part]);
+        this.ui.updateAllCharts(dateFilteredRecords, part, PART_SPECS[part]);
 
         if (!param) return;
 
         this.ui.highlightChart(param, shouldScrollToChart);
 
-        const filteredRecords = machineRecords.filter(r => r.part === part && r.parameter === param);
+        const filteredRecords = dateFilteredRecords.filter(r => r.part === part && r.parameter === param);
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
         this.ui.renderBellCurve(filteredRecords, this.currentConfig, part);
