@@ -503,22 +503,31 @@ class DashboardUI {
             <div class="relative h-[300px] w-full">
                 <canvas id="bellCurveCanvas"></canvas>
             </div>
-            <div id="sigma-stats-panel" class="hidden mt-3 pt-3 border-t grid grid-cols-4 gap-3 text-center">
-                <div class="bg-indigo-50 rounded-lg p-2">
-                    <p class="text-xs text-indigo-500 font-medium">Sigma Level</p>
-                    <p id="stat-sigma-level" class="text-xl font-bold text-indigo-700">-</p>
+            <div id="sigma-stats-panel" class="hidden mt-3 pt-3 border-t">
+                <div class="grid grid-cols-4 gap-3 text-center">
+                    <div class="bg-indigo-50 rounded-lg p-2">
+                        <p class="text-xs text-indigo-500 font-medium">Short-term σ</p>
+                        <p class="text-xs text-indigo-400 mb-0.5">Cpk × 3</p>
+                        <p id="stat-sigma-short" class="text-xl font-bold text-indigo-700">-</p>
+                    </div>
+                    <div class="bg-purple-50 rounded-lg p-2">
+                        <p class="text-xs text-purple-500 font-medium">Long-term σ</p>
+                        <p class="text-xs text-purple-400 mb-0.5">Cpk × 3 + 1.5</p>
+                        <p id="stat-sigma-long" class="text-xl font-bold text-purple-700">-</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-2">
+                        <p class="text-xs text-gray-500 font-medium">DPMO</p>
+                        <p class="text-xs text-gray-400 mb-0.5">ของเสีย/ล้านชิ้น</p>
+                        <p id="stat-dpmo" class="text-xl font-bold text-gray-700">-</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-2">
+                        <p class="text-xs text-gray-500 font-medium">Yield (%)</p>
+                        <p class="text-xs text-gray-400 mb-0.5">อัตราผลิตภัณฑ์ดี</p>
+                        <p id="stat-yield" class="text-xl font-bold text-gray-700">-</p>
+                    </div>
                 </div>
-                <div class="bg-gray-50 rounded-lg p-2">
-                    <p class="text-xs text-gray-500 font-medium">DPMO</p>
-                    <p id="stat-dpmo" class="text-xl font-bold text-gray-700">-</p>
-                </div>
-                <div class="bg-gray-50 rounded-lg p-2">
-                    <p class="text-xs text-gray-500 font-medium">Yield (%)</p>
-                    <p id="stat-yield" class="text-xl font-bold text-gray-700">-</p>
-                </div>
-                <div class="bg-gray-50 rounded-lg p-2">
-                    <p class="text-xs text-gray-500 font-medium">เป้าหมาย 6σ</p>
-                    <p id="stat-target" class="text-sm font-bold text-gray-500">Cpk ≥ 2.00</p>
+                <div id="stat-target-bar" class="mt-2 px-3 py-2 rounded-lg text-sm text-center font-medium bg-gray-100 text-gray-500">
+                    เป้าหมาย 6σ: Cpk ≥ 2.00
                 </div>
             </div>
         `;
@@ -810,11 +819,6 @@ class DashboardUI {
         const panel = document.getElementById('sigma-stats-panel');
         if (!panel) return;
 
-        const stats = StatUtils.calculateCapability(
-            [], // ใช้ mean/sigma ที่คำนวณแล้ว
-            config.usl, config.lsl
-        );
-
         // คำนวณ Cpk จาก mean/sigma โดยตรง
         let cpk = null;
         if (sigma > 0) {
@@ -826,27 +830,44 @@ class DashboardUI {
 
         const dpmo = StatUtils.calcDPMO(mean, sigma, config.usl, config.lsl);
         const yieldPct = ((1 - dpmo / 1_000_000) * 100).toFixed(4);
-        const sigmaLvl = cpk !== null ? (cpk * 3).toFixed(2) : '-';
-        const sigmaNum = cpk !== null ? parseFloat(sigmaLvl) : 0;
 
-        const sigmaEl = document.getElementById('stat-sigma-level');
-        const dpmoEl = document.getElementById('stat-dpmo');
+        // Short-term: Cpk × 3
+        const sigmaShort = cpk !== null ? cpk * 3 : null;
+        // Long-term: Cpk × 3 + 1.5 (มาตรฐาน Six Sigma รวม process drift)
+        const sigmaLong  = cpk !== null ? cpk * 3 + 1.5 : null;
+
+        const _colorForSigma = n => n >= 6 ? 'text-green-600'
+                                  : n >= 5 ? 'text-blue-600'
+                                  : n >= 4 ? 'text-yellow-600'
+                                  : 'text-red-600';
+
+        const shortEl = document.getElementById('stat-sigma-short');
+        const longEl  = document.getElementById('stat-sigma-long');
+        const dpmoEl  = document.getElementById('stat-dpmo');
         const yieldEl = document.getElementById('stat-yield');
-        const targetEl = document.getElementById('stat-target');
+        const targetEl = document.getElementById('stat-target-bar');
 
-        if (sigmaEl) {
-            sigmaEl.innerText = cpk !== null ? `${sigmaLvl}σ` : '-';
-            sigmaEl.className = sigmaNum >= 6 ? 'text-xl font-bold text-green-600'
-                              : sigmaNum >= 5 ? 'text-xl font-bold text-blue-600'
-                              : sigmaNum >= 4 ? 'text-xl font-bold text-yellow-600'
-                              : 'text-xl font-bold text-red-600';
+        if (shortEl) {
+            shortEl.innerText = sigmaShort !== null ? `${sigmaShort.toFixed(2)}σ` : '-';
+            shortEl.className = `text-xl font-bold ${sigmaShort !== null ? _colorForSigma(sigmaShort) : 'text-gray-400'}`;
+        }
+        if (longEl) {
+            longEl.innerText = sigmaLong !== null ? `${sigmaLong.toFixed(2)}σ` : '-';
+            longEl.className = `text-xl font-bold ${sigmaLong !== null ? _colorForSigma(sigmaLong) : 'text-gray-400'}`;
         }
         if (dpmoEl) dpmoEl.innerText = cpk !== null ? dpmo.toLocaleString() : '-';
         if (yieldEl) yieldEl.innerText = cpk !== null ? `${yieldPct}%` : '-';
-        if (targetEl) {
-            const cpkVal = cpk !== null ? cpk.toFixed(2) : '-';
-            const ok = cpk !== null && cpk >= 2.0;
-            targetEl.innerHTML = `Cpk ≥ 2.00<br/><span class="${ok ? 'text-green-600' : 'text-red-500'} font-bold">${ok ? '✓ ผ่าน' : `✗ ปัจจุบัน ${cpkVal}`}</span>`;
+
+        if (targetEl && cpk !== null) {
+            const cpkStr = cpk.toFixed(2);
+            const ok = cpk >= 2.0;
+            targetEl.className = `mt-2 px-3 py-2 rounded-lg text-sm text-center font-medium ${ok ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-600'}`;
+            targetEl.innerText = ok
+                ? `✓ ผ่านเป้าหมาย 6σ — Cpk = ${cpkStr} (≥ 2.00)`
+                : `✗ ยังไม่ถึง 6σ — Cpk ปัจจุบัน = ${cpkStr} (ต้องการ ≥ 2.00)`;
+        } else if (targetEl) {
+            targetEl.className = 'mt-2 px-3 py-2 rounded-lg text-sm text-center font-medium bg-gray-100 text-gray-500';
+            targetEl.innerText = 'เป้าหมาย 6σ: Cpk ≥ 2.00';
         }
     }
 
