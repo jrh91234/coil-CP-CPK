@@ -57,7 +57,7 @@ class StatUtils {
         return Math.sqrt(variance);
     }
 
-    // แปลง timestamp จาก toLocaleString('th-TH') → Date object
+    // แปลง timestamp จาก toLocaleString('th-TH') → Date object (เฉพาะวัน)
     static parseThaiDate(timestamp) {
         if (!timestamp) return null;
         try {
@@ -68,6 +68,24 @@ class StatUtils {
             let [d, m, y] = parts.map(Number);
             if (y > 2500) y -= 543; // Buddhist Era → CE
             const result = new Date(y, m - 1, d);
+            return isNaN(result.getTime()) ? null : result;
+        } catch { return null; }
+    }
+
+    // แปลง timestamp จาก toLocaleString('th-TH') → Date object (รวมเวลา)
+    static parseThaiDateTime(timestamp) {
+        if (!timestamp) return null;
+        try {
+            const clean = String(timestamp).replace(',', '').trim();
+            const parts = clean.split(' ');
+            const datePart = parts[0];
+            const timePart = parts[1] || '0:0:0';
+            const dp = datePart.split('/');
+            if (dp.length !== 3) return null;
+            let [d, m, y] = dp.map(Number);
+            if (y > 2500) y -= 543;
+            const [h, min, s] = timePart.split(':').map(v => Number(v) || 0);
+            const result = new Date(y, m - 1, d, h, min, s);
             return isNaN(result.getTime()) ? null : result;
         } catch { return null; }
     }
@@ -1302,12 +1320,23 @@ class AppController {
         const toVal = document.getElementById('date-to')?.value;
         if (!fromVal && !toVal) return records;
 
+        // ตัดวันตาม shift การผลิต: 08:00 ของวัน X → 07:59:59 ของวัน X+1
+        let rangeStart = null, rangeEnd = null;
+        if (fromVal) {
+            const [fy, fm, fd] = fromVal.split('-').map(Number);
+            rangeStart = new Date(fy, fm - 1, fd, 8, 0, 0); // 08:00 น. ของวันเริ่ม
+        }
+        if (toVal) {
+            const [ty, tm, td] = toVal.split('-').map(Number);
+            // สิ้นสุด 07:59:59 ของวันถัดจาก toVal (= วัน toVal+1 เวลา 07:59:59)
+            rangeEnd = new Date(ty, tm - 1, td + 1, 7, 59, 59);
+        }
+
         return records.filter(r => {
-            const d = StatUtils.parseThaiDate(r.timestamp);
-            if (!d) return true;
-            const iso = StatUtils.dateToISO(d);
-            if (fromVal && iso < fromVal) return false;
-            if (toVal && iso > toVal) return false;
+            const dt = StatUtils.parseThaiDateTime(r.timestamp);
+            if (!dt) return true;
+            if (rangeStart && dt < rangeStart) return false;
+            if (rangeEnd && dt > rangeEnd) return false;
             return true;
         });
     }
@@ -1316,8 +1345,14 @@ class AppController {
         this.activeDatePreset = days;
         const dateFrom = document.getElementById('date-from');
         const dateTo = document.getElementById('date-to');
-        const today = new Date();
-        const toISO = StatUtils.dateToISO(today);
+        const now = new Date();
+
+        // วันผลิตเริ่ม 08:00 — ก่อน 08:00 ยังนับเป็น shift เมื่อวาน
+        const productionToday = new Date(now);
+        if (now.getHours() < 8) {
+            productionToday.setDate(productionToday.getDate() - 1);
+        }
+        const toISO = StatUtils.dateToISO(productionToday);
 
         if (days === -1) {
             dateFrom.value = '';
@@ -1326,8 +1361,8 @@ class AppController {
             dateFrom.value = toISO;
             dateTo.value = toISO;
         } else {
-            const fromDate = new Date(today);
-            fromDate.setDate(today.getDate() - days + 1);
+            const fromDate = new Date(productionToday);
+            fromDate.setDate(productionToday.getDate() - days + 1);
             dateFrom.value = StatUtils.dateToISO(fromDate);
             dateTo.value = toISO;
         }
@@ -1407,7 +1442,7 @@ class AppController {
             document.getElementById('gauge-pass-btn').className = passIdle;
         });
 
-        // Date range filter
+        // Date range filter — preset buttons ค้นหาทันที
         document.querySelectorAll('.date-preset-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const days = parseInt(btn.dataset.days);
@@ -1415,16 +1450,27 @@ class AppController {
             });
         });
 
+        // เปลี่ยนวันด้วยมือ → ยกเลิก preset highlight แต่ยังไม่ค้นหา (รอกด ค้นหา)
         document.getElementById('date-from').addEventListener('change', () => {
             this.activeDatePreset = null;
             this._updatePresetUI();
-            this.refreshDashboard(false, false);
         });
 
         document.getElementById('date-to').addEventListener('change', () => {
             this.activeDatePreset = null;
             this._updatePresetUI();
+        });
+
+        // ปุ่มค้นหา (date range manual)
+        document.getElementById('date-search-btn').addEventListener('click', () => {
             this.refreshDashboard(false, false);
+        });
+
+        // Enter ใน date inputs ก็ค้นหาได้
+        ['date-from', 'date-to'].forEach(id => {
+            document.getElementById(id).addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this.refreshDashboard(false, false);
+            });
         });
     }
 
@@ -1555,9 +1601,39 @@ class AppController {
         this.refreshDashboard(true, true);
     }
 
-    async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
-        let allRecords;
+    _setSearchLoading(isLoading) {
+        const bar   = document.getElementById('dashboard-loading-bar');
+        const icon  = document.getElementById('date-search-icon');
+        const spin  = document.getElementById('date-search-spinner');
+        const label = document.getElementById('date-search-label');
+        const btn   = document.getElementById('date-search-btn');
+        if (isLoading) {
+            bar?.classList.remove('hidden');
+            icon?.classList.add('hidden');
+            spin?.classList.remove('hidden');
+            if (label) label.innerText = 'กำลังค้นหา...';
+            if (btn)   btn.disabled = true;
+        } else {
+            bar?.classList.add('hidden');
+            icon?.classList.remove('hidden');
+            spin?.classList.add('hidden');
+            if (label) label.innerText = 'ค้นหา';
+            if (btn)   btn.disabled = false;
+        }
+    }
 
+    async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
+        const t0 = performance.now();
+        this._setSearchLoading(true);
+
+        // เริ่มนับเวลาที่แสดงใน loading bar
+        const elapsedEl = document.getElementById('dashboard-loading-elapsed');
+        const ticker = setInterval(() => {
+            if (elapsedEl) elapsedEl.innerText = `${((performance.now() - t0) / 1000).toFixed(1)} วิ`;
+        }, 100);
+
+        let allRecords;
+        try {
         if (useLocalCache && this.db.getLocalData) {
             allRecords = this.db.getLocalData();
         } else {
@@ -1576,7 +1652,13 @@ class AppController {
 
         this.ui.updateAllCharts(dateFilteredRecords, part, PART_SPECS[part]);
 
-        if (!param) return;
+        if (!param) {
+            clearInterval(ticker);
+            const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+            if (elapsedEl) elapsedEl.innerText = `✓ ${elapsed} วิ`;
+            setTimeout(() => this._setSearchLoading(false), 600);
+            return;
+        }
 
         this.ui.highlightChart(param, shouldScrollToChart);
 
@@ -1584,6 +1666,17 @@ class AppController {
         this.ui.renderTable(filteredRecords, this.currentConfig);
         this.ui.renderKPIs(filteredRecords, this.currentConfig);
         this.ui.renderBellCurve(filteredRecords, this.currentConfig, part);
+
+        } catch (err) {
+            console.error('refreshDashboard error:', err);
+        } finally {
+            clearInterval(ticker);
+            const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+            const loadText = document.getElementById('dashboard-loading-text');
+            if (loadText) loadText.innerText = `ค้นหาเสร็จแล้ว`;
+            if (elapsedEl) elapsedEl.innerText = `✓ ${elapsed} วิ`;
+            setTimeout(() => this._setSearchLoading(false), 800);
+        }
     }
 }
 

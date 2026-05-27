@@ -139,10 +139,31 @@
                     <button class="date-preset-btn px-3 py-1 text-xs rounded-full border font-medium transition-colors" data-days="30">30 วัน</button>
                     <button class="date-preset-btn active-preset px-3 py-1 text-xs rounded-full border font-medium transition-colors bg-blue-600 text-white border-blue-600" data-days="-1">ทั้งหมด</button>
                 </div>
-                <div class="flex items-center gap-1 ml-auto">
+                <div class="flex items-center gap-1 ml-auto flex-wrap">
                     <input type="date" id="date-from" class="text-xs p-1.5 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
                     <span class="text-gray-400 text-xs">—</span>
                     <input type="date" id="date-to" class="text-xs p-1.5 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    <button id="date-search-btn" class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors">
+                        <svg id="date-search-icon" xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <svg id="date-search-spinner" class="hidden h-3.5 w-3.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                        </svg>
+                        <span id="date-search-label">ค้นหา</span>
+                    </button>
+                </div>
+            </div>
+            <!-- Loading bar for dashboard refresh -->
+            <div id="dashboard-loading-bar" class="hidden">
+                <div class="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                    <svg class="h-4 w-4 animate-spin shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                    </svg>
+                    <span id="dashboard-loading-text">กำลังค้นหาข้อมูล...</span>
+                    <span id="dashboard-loading-elapsed" class="ml-auto font-mono font-bold text-blue-700"></span>
                 </div>
             </div>
 
