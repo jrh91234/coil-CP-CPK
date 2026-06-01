@@ -355,6 +355,7 @@ class DashboardUI {
         this.bellChartInstance = null;
         this.bellCurveMode = null; // 'numeric' | 'gauge'
         this.showSixSigma = false;
+        this._currentModalItemKey = null;
         this.elements = {
             machineSelect: document.getElementById('machine-id'),
             partSelect: document.getElementById('part-id'),
@@ -384,25 +385,89 @@ class DashboardUI {
             const itemName = btn.dataset.itemName || itemKey;
             this.openImageModal(itemKey, itemName, ITEM_IMAGES[itemKey] || '');
         });
+
+        // โหลดรูปภาพจาก localStorage เมื่อเปิดหน้า
+        this._loadImagesFromStorage();
+
+        // ผูก event สำหรับ upload และ delete ใน modal
+        document.getElementById('image-modal-file-input')?.addEventListener('change', (e) => {
+            const file = e.target.files?.[0];
+            if (!file || !this._currentModalItemKey) return;
+            e.target.value = ''; // reset เพื่อให้ upload ไฟล์เดิมซ้ำได้
+            this._compressAndSaveImage(this._currentModalItemKey, file);
+        });
+
+        document.getElementById('image-modal-delete-btn')?.addEventListener('click', () => {
+            if (!this._currentModalItemKey) return;
+            if (!confirm(`ลบรูปภาพของ ${this._currentModalItemKey} ออกหรือไม่?`)) return;
+            this._deleteImageFromStorage(this._currentModalItemKey);
+        });
     }
 
     openImageModal(itemKey, itemName, imageUrl) {
         const modal = document.getElementById('image-modal');
-        const titleEl = document.getElementById('image-modal-title');
+        if (!modal) return;
+        this._currentModalItemKey = itemKey;
+        document.getElementById('image-modal-title').textContent = itemName || itemKey;
+        this._refreshModalImage(imageUrl);
+        modal.classList.remove('hidden');
+    }
+
+    _refreshModalImage(imageUrl) {
         const imgEl = document.getElementById('image-modal-img');
         const noImgEl = document.getElementById('image-modal-no-img');
-        if (!modal) return;
-        if (titleEl) titleEl.textContent = itemName || itemKey;
+        const deleteBtn = document.getElementById('image-modal-delete-btn');
         if (imageUrl) {
             imgEl.src = imageUrl;
             imgEl.classList.remove('hidden');
             noImgEl?.classList.add('hidden');
+            deleteBtn?.classList.remove('hidden');
         } else {
             imgEl.src = '';
             imgEl.classList.add('hidden');
             noImgEl?.classList.remove('hidden');
+            deleteBtn?.classList.add('hidden');
         }
-        modal.classList.remove('hidden');
+    }
+
+    _loadImagesFromStorage() {
+        const keys = ['item2', 'item3', 'item4', 'item5', 'item6', 'item7'];
+        keys.forEach(key => {
+            const stored = localStorage.getItem(`spc_img_${key}`);
+            if (stored) ITEM_IMAGES[key] = stored;
+        });
+    }
+
+    _compressAndSaveImage(itemKey, file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const MAX_W = 1400;
+                let w = img.width, h = img.height;
+                if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                try {
+                    localStorage.setItem(`spc_img_${itemKey}`, dataUrl);
+                } catch {
+                    alert('ไม่สามารถบันทึกรูปได้ — ไฟล์อาจใหญ่เกินไป กรุณาใช้รูปขนาดเล็กกว่านี้');
+                    return;
+                }
+                ITEM_IMAGES[itemKey] = dataUrl;
+                this._refreshModalImage(dataUrl);
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    _deleteImageFromStorage(itemKey) {
+        localStorage.removeItem(`spc_img_${itemKey}`);
+        ITEM_IMAGES[itemKey] = '';
+        this._refreshModalImage('');
     }
 
     setStatus(text, colorClass) {
