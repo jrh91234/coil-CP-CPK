@@ -947,10 +947,8 @@ class DashboardUI {
         if (titleEl) titleEl.innerText = `${partName} - ${currentConfig.name ? currentConfig.name.split(':')[0] : ''}`;
         if (headerEl) headerEl.innerText = 'การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)';
 
-        const paramKey = this.elements.paramSelect?.value || '';
-        const compositeKey = partName ? `${partName}|${paramKey}` : paramKey;
-        const itemName = currentConfig.name ? currentConfig.name.split(':')[0] : paramKey;
-        this._updateImagePanel(compositeKey, itemName, ITEM_IMAGES[compositeKey] || '');
+        const imageKey = partName || (this.elements.paramSelect?.value || '');
+        this._updateImagePanel(imageKey, partName, ITEM_IMAGES[imageKey] || '');
 
         const values = dataRecords.map(r => parseFloat(r.value)).filter(v => !isNaN(v));
 
@@ -1095,8 +1093,8 @@ class DashboardUI {
         if (titleEl) titleEl.innerText = `${partName} - Item 6 (Gauge)`;
         if (headerEl) headerEl.innerText = 'ประวัติการตรวจสอบ Gauge (P-Chart)';
 
-        const gaugeCompositeKey = partName ? `${partName}|item6` : 'item6';
-        this._updateImagePanel(gaugeCompositeKey, 'Item 6', ITEM_IMAGES[gaugeCompositeKey] || '');
+        const imageKey = partName || 'item6';
+        this._updateImagePanel(imageKey, partName, ITEM_IMAGES[imageKey] || '');
 
         const records = [...dataRecords].slice(-30);
 
