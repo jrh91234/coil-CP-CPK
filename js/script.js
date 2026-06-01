@@ -386,21 +386,21 @@ class DashboardUI {
             this.openImageModal(itemKey, itemName, ITEM_IMAGES[itemKey] || '');
         });
 
-        // โหลดรูปภาพจาก localStorage เมื่อเปิดหน้า
-        this._loadImagesFromStorage();
+        // โหลดรูปภาพจาก Cloud เมื่อเปิดหน้า (fire-and-forget)
+        if (AppConfig.USE_GOOGLE_SHEET) this._loadImagesFromCloud();
 
         // ผูก event สำหรับ upload และ delete ใน modal
         document.getElementById('image-modal-file-input')?.addEventListener('change', (e) => {
             const file = e.target.files?.[0];
             if (!file || !this._currentModalItemKey) return;
-            e.target.value = ''; // reset เพื่อให้ upload ไฟล์เดิมซ้ำได้
-            this._compressAndSaveImage(this._currentModalItemKey, file);
+            e.target.value = '';
+            this._compressAndUploadImage(this._currentModalItemKey, file);
         });
 
         document.getElementById('image-modal-delete-btn')?.addEventListener('click', () => {
             if (!this._currentModalItemKey) return;
             if (!confirm(`ลบรูปภาพของ ${this._currentModalItemKey} ออกหรือไม่?`)) return;
-            this._deleteImageFromStorage(this._currentModalItemKey);
+            this._deleteImageFromCloud(this._currentModalItemKey);
         });
     }
 
@@ -430,44 +430,88 @@ class DashboardUI {
         }
     }
 
-    _loadImagesFromStorage() {
-        const keys = ['item2', 'item3', 'item4', 'item5', 'item6', 'item7'];
-        keys.forEach(key => {
-            const stored = localStorage.getItem(`spc_img_${key}`);
-            if (stored) ITEM_IMAGES[key] = stored;
+    async _loadImagesFromCloud() {
+        try {
+            const res = await fetch(`${AppConfig.GOOGLE_SHEET_URL}?action=get_images`);
+            const json = await res.json();
+            if (json.success && json.data) Object.assign(ITEM_IMAGES, json.data);
+        } catch (e) {
+            console.warn('Could not load images from cloud:', e);
+        }
+    }
+
+    _compressToDataUrl(file) {
+        return new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onload = ev => {
+                const img = new Image();
+                img.onload = () => {
+                    const MAX_W = 1400;
+                    let w = img.width, h = img.height;
+                    if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    resolve(canvas.toDataURL('image/jpeg', 0.85));
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
         });
     }
 
-    _compressAndSaveImage(itemKey, file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const img = new Image();
-            img.onload = () => {
-                const MAX_W = 1400;
-                let w = img.width, h = img.height;
-                if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                try {
-                    localStorage.setItem(`spc_img_${itemKey}`, dataUrl);
-                } catch {
-                    alert('ไม่สามารถบันทึกรูปได้ — ไฟล์อาจใหญ่เกินไป กรุณาใช้รูปขนาดเล็กกว่านี้');
-                    return;
-                }
-                ITEM_IMAGES[itemKey] = dataUrl;
-                this._refreshModalImage(dataUrl);
-            };
-            img.src = e.target.result;
-        };
-        reader.readAsDataURL(file);
+    async _compressAndUploadImage(itemKey, file) {
+        this._setModalUploading(true);
+        try {
+            const dataUrl = await this._compressToDataUrl(file);
+            const [header, base64] = dataUrl.split(',');
+            const mimeType = header.match(/:(.*?);/)[1];
+            const res = await fetch(AppConfig.GOOGLE_SHEET_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action: 'upload_image', itemKey, imageData: base64, mimeType })
+            });
+            const json = await res.json();
+            if (json.success && json.data?.url) {
+                ITEM_IMAGES[itemKey] = json.data.url;
+                this._refreshModalImage(json.data.url);
+            } else {
+                alert('อัพโหลดไม่สำเร็จ: ' + (json.error || 'unknown error'));
+            }
+        } catch (e) {
+            alert('อัพโหลดไม่สำเร็จ: ' + e.message);
+        } finally {
+            this._setModalUploading(false);
+        }
     }
 
-    _deleteImageFromStorage(itemKey) {
-        localStorage.removeItem(`spc_img_${itemKey}`);
+    async _deleteImageFromCloud(itemKey) {
+        this._setModalUploading(true);
+        try {
+            await fetch(AppConfig.GOOGLE_SHEET_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action: 'delete_image', itemKey })
+            });
+        } catch (e) {
+            console.warn('Delete image error:', e);
+        } finally {
+            this._setModalUploading(false);
+        }
         ITEM_IMAGES[itemKey] = '';
         this._refreshModalImage('');
+    }
+
+    _setModalUploading(isLoading) {
+        const input = document.getElementById('image-modal-file-input');
+        const icon = document.getElementById('image-upload-icon');
+        const spinner = document.getElementById('image-upload-spinner');
+        const labelText = document.getElementById('image-upload-label-text');
+        const deleteBtn = document.getElementById('image-modal-delete-btn');
+        if (input) input.disabled = isLoading;
+        icon?.classList.toggle('hidden', isLoading);
+        spinner?.classList.toggle('hidden', !isLoading);
+        if (labelText) labelText.textContent = isLoading ? 'กำลังอัพโหลด...' : 'อัพโหลดรูปภาพ';
+        if (deleteBtn) deleteBtn.style.opacity = isLoading ? '0.4' : '1';
+        if (deleteBtn) deleteBtn.disabled = isLoading;
     }
 
     setStatus(text, colorClass) {
