@@ -43,6 +43,18 @@ const PART_SPECS = {
     }
 };
 
+// ตั้งค่า path หรือ URL ของรูปภาพแสดงตำแหน่งวัดแต่ละ Item
+// ใส่ path ไฟล์ภาพ เช่น "images/item2.jpg" หรือ URL เว็บไซต์
+// หากไม่มีรูปภาพให้ใส่ "" (ว่าง)
+const ITEM_IMAGES = {
+    "item2": "",
+    "item3": "",
+    "item4": "",
+    "item5": "",
+    "item6": "",
+    "item7": "",
+};
+
 // -----------------------------------------------------
 // 2. UTILITIES (Math & Statistics)
 // -----------------------------------------------------
@@ -363,6 +375,34 @@ class DashboardUI {
             kpiCpk: document.getElementById('kpi-cpk'),
             kpiCpkCard: document.getElementById('kpi-cpk-card')
         };
+
+        // Event delegation: จัดการคลิกปุ่มรูปภาพทุกตัวในหน้า
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('.item-img-btn');
+            if (!btn) return;
+            const itemKey = btn.dataset.item;
+            const itemName = btn.dataset.itemName || itemKey;
+            this.openImageModal(itemKey, itemName, ITEM_IMAGES[itemKey] || '');
+        });
+    }
+
+    openImageModal(itemKey, itemName, imageUrl) {
+        const modal = document.getElementById('image-modal');
+        const titleEl = document.getElementById('image-modal-title');
+        const imgEl = document.getElementById('image-modal-img');
+        const noImgEl = document.getElementById('image-modal-no-img');
+        if (!modal) return;
+        if (titleEl) titleEl.textContent = itemName || itemKey;
+        if (imageUrl) {
+            imgEl.src = imageUrl;
+            imgEl.classList.remove('hidden');
+            noImgEl?.classList.add('hidden');
+        } else {
+            imgEl.src = '';
+            imgEl.classList.add('hidden');
+            noImgEl?.classList.remove('hidden');
+        }
+        modal.classList.remove('hidden');
     }
 
     setStatus(text, colorClass) {
@@ -512,6 +552,15 @@ class DashboardUI {
                 <h3 id="bell-curve-title" class="text-md font-bold text-gray-700">การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)</h3>
                 <div class="flex items-center gap-2">
                     <span id="bell-chart-title" class="text-xs bg-purple-100 text-purple-800 px-3 py-1 rounded-full font-bold"></span>
+                    <button id="bell-curve-img-btn"
+                        class="item-img-btn text-xs px-2 py-1 rounded-full border font-medium transition-colors border-gray-300 text-gray-500 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 flex items-center gap-1"
+                        data-item="" data-item-name="" title="ดูตำแหน่งวัด">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        ตำแหน่งวัด
+                    </button>
                     <button id="six-sigma-btn"
                         class="text-xs px-3 py-1 rounded-full border font-medium transition-colors border-gray-300 text-gray-500 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-600">
                         6σ View
@@ -752,6 +801,13 @@ class DashboardUI {
         if (titleEl) titleEl.innerText = `${partName} - ${currentConfig.name ? currentConfig.name.split(':')[0] : ''}`;
         if (headerEl) headerEl.innerText = 'การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)';
 
+        const imgBtn = document.getElementById('bell-curve-img-btn');
+        if (imgBtn) {
+            const paramKey = this.elements.paramSelect?.value || '';
+            imgBtn.dataset.item = paramKey;
+            imgBtn.dataset.itemName = currentConfig.name ? currentConfig.name.split(':')[0] : paramKey;
+        }
+
         const values = dataRecords.map(r => parseFloat(r.value)).filter(v => !isNaN(v));
 
         if (values.length < 2) {
@@ -895,6 +951,12 @@ class DashboardUI {
         if (titleEl) titleEl.innerText = `${partName} - Item 6 (Gauge)`;
         if (headerEl) headerEl.innerText = 'ประวัติการตรวจสอบ Gauge (P-Chart)';
 
+        const imgBtn = document.getElementById('bell-curve-img-btn');
+        if (imgBtn) {
+            imgBtn.dataset.item = 'item6';
+            imgBtn.dataset.itemName = 'Item 6';
+        }
+
         const records = [...dataRecords].slice(-30);
 
         if (records.length === 0) {
@@ -958,17 +1020,27 @@ class DashboardUI {
         }
         this.chartInstances = {};
 
+        const camSvg = `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
+
         for (const [key, spec] of Object.entries(specsObject)) {
             const wrapper = document.createElement('div');
             wrapper.className = 'bg-white p-4 rounded-xl shadow-sm border transition-all duration-500 ease-in-out';
             wrapper.id = `chart-wrapper-${key}`;
 
+            const itemLabel = spec.name.split(':')[0];
+
             if (spec.type === 'gauge') {
                 // Gauge type: bar chart with pass/fail
                 wrapper.innerHTML = `
                     <div class="flex justify-between items-center mb-2 border-b pb-2">
-                        <h3 class="text-sm font-bold text-gray-700">${spec.name.split(':')[0]}</h3>
-                        <span class="gauge-rate text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full font-bold">-</span>
+                        <h3 class="text-sm font-bold text-gray-700">${itemLabel}</h3>
+                        <div class="flex items-center gap-2">
+                            <span class="gauge-rate text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full font-bold">-</span>
+                            <button class="item-img-btn shrink-0 text-gray-400 hover:text-blue-600 transition-colors p-0.5 rounded"
+                                    data-item="${key}" data-item-name="${itemLabel}" title="ดูตำแหน่งวัด">
+                                ${camSvg}
+                            </button>
+                        </div>
                     </div>
                     <div class="relative h-48 w-full">
                         <canvas id="canvas-${key}"></canvas>
@@ -1005,9 +1077,16 @@ class DashboardUI {
                 // Numeric type: line chart (existing behavior)
                 const header = document.createElement('div');
                 header.className = 'flex justify-between items-center mb-2 border-b pb-2';
+                const itemDim = (spec.name.split(':')[1] || spec.name).trim();
                 header.innerHTML = `
-                    <h3 class="text-sm font-bold text-gray-700">${spec.name.split(':')[0]}</h3>
-                    <span class="text-xs text-gray-500 truncate ml-2" title="${spec.name.split(':')[1] || spec.name}">${spec.name.split(':')[1] || spec.name}</span>
+                    <h3 class="text-sm font-bold text-gray-700">${itemLabel}</h3>
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="text-xs text-gray-500 truncate" title="${itemDim}">${itemDim}</span>
+                        <button class="item-img-btn shrink-0 text-gray-400 hover:text-blue-600 transition-colors p-0.5 rounded"
+                                data-item="${key}" data-item-name="${itemLabel}" title="ดูตำแหน่งวัด">
+                            ${camSvg}
+                        </button>
+                    </div>
                 `;
 
                 const canvasContainer = document.createElement('div');

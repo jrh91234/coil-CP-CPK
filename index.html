@@ -197,5 +197,31 @@
 
     <!-- แก้ไขพาธชี้ไปที่โฟลเดอร์ js -->
     <script src="js/script.js"></script>
+
+    <!-- Modal สำหรับแสดงรูปภาพตำแหน่งวัด -->
+    <div id="image-modal"
+         class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+         onclick="this.classList.add('hidden')">
+        <div class="relative max-w-3xl w-full mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden"
+             onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center px-5 py-3 border-b bg-gray-50">
+                <h3 id="image-modal-title" class="text-sm font-bold text-gray-700">ตำแหน่งวัด</h3>
+                <button onclick="document.getElementById('image-modal').classList.add('hidden')"
+                        class="text-gray-400 hover:text-gray-700 text-2xl leading-none font-light transition-colors">&times;</button>
+            </div>
+            <div class="p-4 flex flex-col items-center min-h-[200px] justify-center">
+                <img id="image-modal-img" src="" alt="ตำแหน่งวัด"
+                     class="max-h-[70vh] w-auto object-contain rounded hidden">
+                <div id="image-modal-no-img" class="text-center text-gray-400 py-12">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <p class="text-sm font-medium">ยังไม่มีรูปภาพสำหรับจุดนี้</p>
+                    <p class="text-xs text-gray-300 mt-1">วางไฟล์ภาพใน <code class="bg-gray-100 px-1 rounded">images/</code> และตั้งค่าใน <code class="bg-gray-100 px-1 rounded">ITEM_IMAGES</code></p>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
