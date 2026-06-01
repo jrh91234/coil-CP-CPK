@@ -224,11 +224,15 @@
             <!-- Footer: upload / delete -->
             <div class="flex justify-between items-center px-5 py-3 border-t bg-gray-50 gap-4">
                 <label id="image-modal-upload-label"
-                       class="cursor-pointer inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       class="cursor-pointer inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors select-none">
+                    <svg id="image-upload-icon" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                     </svg>
-                    อัพโหลดรูปภาพ
+                    <svg id="image-upload-spinner" class="hidden h-4 w-4 shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                    </svg>
+                    <span id="image-upload-label-text">อัพโหลดรูปภาพ</span>
                     <input type="file" accept="image/*" id="image-modal-file-input" class="hidden">
                 </label>
                 <button id="image-modal-delete-btn"
