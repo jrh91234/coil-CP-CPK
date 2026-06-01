@@ -473,7 +473,15 @@ class DashboardUI {
         try {
             const res = await fetch(`${AppConfig.GOOGLE_SHEET_URL}?action=get_images`);
             const json = await res.json();
-            if (json.success && json.data) Object.assign(ITEM_IMAGES, json.data);
+            if (json.success && json.data) {
+                Object.assign(ITEM_IMAGES, json.data);
+                // Refresh panel หากมี item ถูกเลือกอยู่แล้ว (แก้ race condition)
+                if (this._currentItemKey && ITEM_IMAGES[this._currentItemKey]) {
+                    const titleEl = document.getElementById('item-image-panel-title');
+                    const itemName = titleEl?.textContent?.replace('ตำแหน่งวัด — ', '') || this._currentItemKey;
+                    this._updateImagePanel(this._currentItemKey, itemName, ITEM_IMAGES[this._currentItemKey]);
+                }
+            }
         } catch (e) {
             console.warn('Could not load images from cloud:', e);
         }
