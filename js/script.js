@@ -491,13 +491,13 @@ class DashboardUI {
             reader.onload = ev => {
                 const img = new Image();
                 img.onload = () => {
-                    const MAX_W = 500;
+                    const MAX_W = 900;
                     let w = img.width, h = img.height;
                     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
                     const canvas = document.createElement('canvas');
                     canvas.width = w; canvas.height = h;
                     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                    resolve(canvas.toDataURL('image/jpeg', 0.70));
+                    resolve(canvas.toDataURL('image/jpeg', 0.82));
                 };
                 img.src = ev.target.result;
             };
