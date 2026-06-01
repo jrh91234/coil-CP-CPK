@@ -59,8 +59,8 @@ class ImageRepository {
     let sheet = this.ss.getSheetByName(Config.IMAGE_SHEET_NAME);
     if (!sheet) {
       sheet = this.ss.insertSheet(Config.IMAGE_SHEET_NAME);
-      sheet.appendRow(["ImageKey", "DataPart1", "DataPart2"]);
-      sheet.getRange(1, 1, 1, 3).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
+      sheet.appendRow(["ImageKey", "DataPart1", "DataPart2", "DataPart3"]);
+      sheet.getRange(1, 1, 1, 4).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
     }
     return sheet;
   }
@@ -71,7 +71,7 @@ class ImageRepository {
     const result = {};
     for (let i = 1; i < values.length; i++) {
       if (values[i][0]) {
-        result[String(values[i][0])] = String(values[i][1] || '') + String(values[i][2] || '');
+        result[String(values[i][0])] = String(values[i][1] || '') + String(values[i][2] || '') + String(values[i][3] || '');
       }
     }
     return result;
@@ -80,7 +80,8 @@ class ImageRepository {
   save(imageKey, dataUrl) {
     const CHUNK = 49000;
     const part1 = dataUrl.substring(0, CHUNK);
-    const part2 = dataUrl.substring(CHUNK);
+    const part2 = dataUrl.substring(CHUNK, CHUNK * 2);
+    const part3 = dataUrl.substring(CHUNK * 2);
 
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
@@ -89,9 +90,9 @@ class ImageRepository {
       if (String(values[i][0]) === imageKey) { rowIdx = i + 1; break; }
     }
     if (rowIdx > 0) {
-      sheet.getRange(rowIdx, 1, 1, 3).setValues([[imageKey, part1, part2]]);
+      sheet.getRange(rowIdx, 1, 1, 4).setValues([[imageKey, part1, part2, part3]]);
     } else {
-      sheet.appendRow([imageKey, part1, part2]);
+      sheet.appendRow([imageKey, part1, part2, part3]);
     }
     return dataUrl;
   }
