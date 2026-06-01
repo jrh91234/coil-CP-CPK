@@ -90,10 +90,10 @@ class ImageRepository {
     const decoded = Utilities.base64Decode(base64Data);
     const blob = Utilities.newBlob(decoded, mimeType || "image/jpeg", "spc_" + itemKey + ".jpg");
     const file = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    file.setSharing(DriveApp.Access.ANYONE, DriveApp.Permission.VIEW);
 
     const fileId = file.getId();
-    const imageUrl = "https://drive.google.com/thumbnail?sz=w1600&id=" + fileId;
+    const imageUrl = "https://drive.google.com/uc?export=view&id=" + fileId;
 
     // บันทึก URL ลง Sheet
     const sheet = this._getSheet();
