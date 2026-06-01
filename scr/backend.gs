@@ -12,9 +12,7 @@ const Config = {
   // ID ของ Google Sheet ไฟล์ Master (ที่มีแท็บ Config)
   MASTER_SHEET_ID: "11NGAEXnTZIXMseO_0vfA-yRWxBXEiWpNkCIdIQq2ftQ",
 
-  // ชื่อโฟลเดอร์ใน Google Drive สำหรับเก็บรูปตำแหน่งวัด
-  IMAGE_FOLDER_NAME: "SPC_ItemImages",
-  // ชื่อแท็บใน Google Sheet สำหรับเก็บ URL รูปภาพ
+  // ชื่อแท็บใน Google Sheet สำหรับเก็บรูปภาพ (เก็บเป็น base64 ใน Sheet โดยตรง — ไม่ใช้ Drive)
   IMAGE_SHEET_NAME: "ItemImages"
 };
 
@@ -50,7 +48,8 @@ const ResponseHelper = {
  * =========================================================================
  */
 
-// --- Image Repository: เก็บรูปใน Google Drive, อ้างอิง URL ใน Sheet ---
+// --- Image Repository: เก็บรูปเป็น base64 ใน Google Sheet โดยตรง (ไม่ใช้ DriveApp) ---
+// แบ่ง dataUrl เป็น 2 ช่อง (DataPart1 + DataPart2) เพราะ Sheet จำกัด 50,000 ตัวอักษร/ช่อง
 class ImageRepository {
   constructor(ss) {
     this.ss = ss;
@@ -60,15 +59,10 @@ class ImageRepository {
     let sheet = this.ss.getSheetByName(Config.IMAGE_SHEET_NAME);
     if (!sheet) {
       sheet = this.ss.insertSheet(Config.IMAGE_SHEET_NAME);
-      sheet.appendRow(["ItemKey", "FileId", "ImageUrl"]);
+      sheet.appendRow(["ImageKey", "DataPart1", "DataPart2"]);
       sheet.getRange(1, 1, 1, 3).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
     }
     return sheet;
-  }
-
-  _getFolder() {
-    const iter = DriveApp.getFoldersByName(Config.IMAGE_FOLDER_NAME);
-    return iter.hasNext() ? iter.next() : DriveApp.createFolder(Config.IMAGE_FOLDER_NAME);
   }
 
   getAll() {
@@ -76,57 +70,37 @@ class ImageRepository {
     const values = sheet.getDataRange().getValues();
     const result = {};
     for (let i = 1; i < values.length; i++) {
-      if (values[i][0]) result[String(values[i][0])] = String(values[i][2]);
+      if (values[i][0]) {
+        result[String(values[i][0])] = String(values[i][1] || '') + String(values[i][2] || '');
+      }
     }
     return result;
   }
 
-  save(itemKey, base64Data, mimeType) {
-    // ลบไฟล์เก่าออกก่อน
-    this._trashExistingFile(itemKey);
+  save(imageKey, dataUrl) {
+    const CHUNK = 49000;
+    const part1 = dataUrl.substring(0, CHUNK);
+    const part2 = dataUrl.substring(CHUNK);
 
-    // สร้างไฟล์ใหม่ใน Drive
-    const folder = this._getFolder();
-    const decoded = Utilities.base64Decode(base64Data);
-    const blob = Utilities.newBlob(decoded, mimeType || "image/jpeg", "spc_" + itemKey + ".jpg");
-    const file = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE, DriveApp.Permission.VIEW);
-
-    const fileId = file.getId();
-    const imageUrl = "https://lh3.googleusercontent.com/d/" + fileId;
-
-    // บันทึก URL ลง Sheet
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
     let rowIdx = -1;
     for (let i = 1; i < values.length; i++) {
-      if (String(values[i][0]) === itemKey) { rowIdx = i + 1; break; }
+      if (String(values[i][0]) === imageKey) { rowIdx = i + 1; break; }
     }
     if (rowIdx > 0) {
-      sheet.getRange(rowIdx, 1, 1, 3).setValues([[itemKey, fileId, imageUrl]]);
+      sheet.getRange(rowIdx, 1, 1, 3).setValues([[imageKey, part1, part2]]);
     } else {
-      sheet.appendRow([itemKey, fileId, imageUrl]);
+      sheet.appendRow([imageKey, part1, part2]);
     }
-    return imageUrl;
+    return dataUrl;
   }
 
-  delete(itemKey) {
-    this._trashExistingFile(itemKey);
+  delete(imageKey) {
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
     for (let i = 1; i < values.length; i++) {
-      if (String(values[i][0]) === itemKey) { sheet.deleteRow(i + 1); break; }
-    }
-  }
-
-  _trashExistingFile(itemKey) {
-    const sheet = this._getSheet();
-    const values = sheet.getDataRange().getValues();
-    for (let i = 1; i < values.length; i++) {
-      if (String(values[i][0]) === itemKey && values[i][1]) {
-        try { DriveApp.getFileById(String(values[i][1])).setTrashed(true); } catch (e) {}
-        break;
-      }
+      if (String(values[i][0]) === imageKey) { sheet.deleteRow(i + 1); break; }
     }
   }
 }
@@ -199,7 +173,7 @@ function doPost(e) {
 
     if (postData.action === "upload_image") {
       const imgRepo = new ImageRepository(ss);
-      const url = imgRepo.save(postData.itemKey, postData.imageData, postData.mimeType);
+      const url = imgRepo.save(postData.itemKey, postData.dataUrl);
       return ResponseHelper.success({ url });
     }
 
@@ -215,17 +189,9 @@ function doPost(e) {
   }
 }
 
-/**
- * =========================================================================
- * MODULE 4: AUTHORIZATION HELPER
- * =========================================================================
- * วิธีใช้: เลือกฟังก์ชัน authorizeApp แล้วกด ▶ Run ใน Apps Script editor
- * ระบบจะขอสิทธิ์ Google Drive → กด Allow แล้ว deploy ใหม่ 1 ครั้ง
- */
 function authorizeApp() {
-  DriveApp.getRootFolder();
   SpreadsheetApp.getActiveSpreadsheet();
-  Logger.log('✅ Authorization complete — Drive + Sheets permissions granted.');
+  Logger.log('✅ Authorization complete — Sheets permissions granted.');
 }
 
 function doGet(e) {
