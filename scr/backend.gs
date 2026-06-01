@@ -93,7 +93,7 @@ class ImageRepository {
     file.setSharing(DriveApp.Access.ANYONE, DriveApp.Permission.VIEW);
 
     const fileId = file.getId();
-    const imageUrl = "https://drive.google.com/uc?export=view&id=" + fileId;
+    const imageUrl = "https://lh3.googleusercontent.com/d/" + fileId;
 
     // บันทึก URL ลง Sheet
     const sheet = this._getSheet();
