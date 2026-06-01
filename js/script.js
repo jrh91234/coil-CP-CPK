@@ -43,17 +43,9 @@ const PART_SPECS = {
     }
 };
 
-// ตั้งค่า path หรือ URL ของรูปภาพแสดงตำแหน่งวัดแต่ละ Item
-// ใส่ path ไฟล์ภาพ เช่น "images/item2.jpg" หรือ URL เว็บไซต์
-// หากไม่มีรูปภาพให้ใส่ "" (ว่าง)
-const ITEM_IMAGES = {
-    "item2": "",
-    "item3": "",
-    "item4": "",
-    "item5": "",
-    "item6": "",
-    "item7": "",
-};
+// Cache รูปภาพจาก cloud โดยใช้ composite key = "partName|itemKey"
+// เช่น "S1B29292-JR (20A)|item2" เพื่อแยกรูปแต่ละรุ่นชิ้นงานออกจากกัน
+const ITEM_IMAGES = {};
 
 // -----------------------------------------------------
 // 2. UTILITIES (Math & Statistics)
@@ -396,6 +388,12 @@ class DashboardUI {
                 this._deleteImageFromCloud(this._currentItemKey);
             }
         });
+    }
+
+    clearImagePanel() {
+        this._currentItemKey = null;
+        const panel = document.getElementById('item-image-panel');
+        if (panel) panel.classList.add('hidden');
     }
 
     _ensureImagePanelDOM() {
@@ -950,8 +948,9 @@ class DashboardUI {
         if (headerEl) headerEl.innerText = 'การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)';
 
         const paramKey = this.elements.paramSelect?.value || '';
+        const compositeKey = partName ? `${partName}|${paramKey}` : paramKey;
         const itemName = currentConfig.name ? currentConfig.name.split(':')[0] : paramKey;
-        this._updateImagePanel(paramKey, itemName, ITEM_IMAGES[paramKey] || '');
+        this._updateImagePanel(compositeKey, itemName, ITEM_IMAGES[compositeKey] || '');
 
         const values = dataRecords.map(r => parseFloat(r.value)).filter(v => !isNaN(v));
 
@@ -1096,7 +1095,8 @@ class DashboardUI {
         if (titleEl) titleEl.innerText = `${partName} - Item 6 (Gauge)`;
         if (headerEl) headerEl.innerText = 'ประวัติการตรวจสอบ Gauge (P-Chart)';
 
-        this._updateImagePanel('item6', 'Item 6', ITEM_IMAGES['item6'] || '');
+        const gaugeCompositeKey = partName ? `${partName}|item6` : 'item6';
+        this._updateImagePanel(gaugeCompositeKey, 'Item 6', ITEM_IMAGES[gaugeCompositeKey] || '');
 
         const records = [...dataRecords].slice(-30);
 
@@ -1859,6 +1859,8 @@ class AppController {
         this.ui.updateAllCharts(dateFilteredRecords, part, PART_SPECS[part]);
 
         if (!param) {
+            // ซ่อน image panel เมื่อยังไม่ได้เลือก parameter
+            this.ui.clearImagePanel();
             clearInterval(ticker);
             const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
             if (elapsedEl) elapsedEl.innerText = `✓ ${elapsed} วิ`;
