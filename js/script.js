@@ -355,7 +355,7 @@ class DashboardUI {
         this.bellChartInstance = null;
         this.bellCurveMode = null; // 'numeric' | 'gauge'
         this.showSixSigma = false;
-        this._currentModalItemKey = null;
+        this._currentItemKey = null;
         this.elements = {
             machineSelect: document.getElementById('machine-id'),
             partSelect: document.getElementById('part-id'),
@@ -377,55 +377,94 @@ class DashboardUI {
             kpiCpkCard: document.getElementById('kpi-cpk-card')
         };
 
-        // Event delegation: จัดการคลิกปุ่มรูปภาพทุกตัวในหน้า
-        document.addEventListener('click', (e) => {
-            const btn = e.target.closest('.item-img-btn');
-            if (!btn) return;
-            const itemKey = btn.dataset.item;
-            const itemName = btn.dataset.itemName || itemKey;
-            this.openImageModal(itemKey, itemName, ITEM_IMAGES[itemKey] || '');
-        });
-
         // โหลดรูปภาพจาก Cloud เมื่อเปิดหน้า (fire-and-forget)
         if (AppConfig.USE_GOOGLE_SHEET) this._loadImagesFromCloud();
 
-        // ผูก event สำหรับ upload และ delete ใน modal
-        document.getElementById('image-modal-file-input')?.addEventListener('change', (e) => {
+        // ผูก upload/delete ผ่าน event delegation บน document (ปุ่มถูกสร้าง dynamic)
+        document.addEventListener('change', (e) => {
+            if (e.target.id !== 'inline-file-input') return;
             const file = e.target.files?.[0];
-            if (!file || !this._currentModalItemKey) return;
+            if (!file || !this._currentItemKey) return;
             e.target.value = '';
-            this._compressAndUploadImage(this._currentModalItemKey, file);
+            this._compressAndUploadImage(this._currentItemKey, file);
         });
 
-        document.getElementById('image-modal-delete-btn')?.addEventListener('click', () => {
-            if (!this._currentModalItemKey) return;
-            if (!confirm(`ลบรูปภาพของ ${this._currentModalItemKey} ออกหรือไม่?`)) return;
-            this._deleteImageFromCloud(this._currentModalItemKey);
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#inline-delete-btn')) {
+                if (!this._currentItemKey) return;
+                if (!confirm('ลบรูปภาพนี้ออกหรือไม่?')) return;
+                this._deleteImageFromCloud(this._currentItemKey);
+            }
         });
     }
 
-    openImageModal(itemKey, itemName, imageUrl) {
-        const modal = document.getElementById('image-modal');
-        if (!modal) return;
-        this._currentModalItemKey = itemKey;
-        document.getElementById('image-modal-title').textContent = itemName || itemKey;
-        this._refreshModalImage(imageUrl);
-        modal.classList.remove('hidden');
+    _ensureImagePanelDOM() {
+        if (document.getElementById('item-image-panel')) return;
+        const panel = document.createElement('div');
+        panel.id = 'item-image-panel';
+        panel.className = 'hidden bg-white rounded-xl shadow-sm border overflow-hidden';
+        panel.innerHTML = `
+            <div class="flex items-center justify-between px-4 py-2 bg-gray-50 border-b">
+                <h3 id="item-image-panel-title" class="text-sm font-bold text-gray-700">ตำแหน่งวัด</h3>
+                <div class="flex items-center gap-3">
+                    <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium select-none">
+                        <svg id="inline-upload-icon" xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        <svg id="inline-upload-spinner" class="hidden h-3.5 w-3.5 shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                        </svg>
+                        <span id="inline-upload-text">อัพโหลดรูปภาพ</span>
+                        <input type="file" accept="image/*" id="inline-file-input" class="hidden">
+                    </label>
+                    <button id="inline-delete-btn"
+                            class="hidden inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 font-medium">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        ลบรูป
+                    </button>
+                </div>
+            </div>
+            <div class="flex items-center justify-center bg-gray-50 min-h-[160px] max-h-[280px] overflow-hidden">
+                <img id="item-image-inline" src="" alt="ตำแหน่งวัด"
+                     class="hidden w-full max-h-[280px] object-contain">
+                <div id="item-image-none" class="text-center text-gray-400 py-10">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <p class="text-sm">ยังไม่มีรูปภาพ</p>
+                    <p class="text-xs text-gray-300 mt-0.5">กดอัพโหลดรูปภาพด้านบน</p>
+                </div>
+            </div>
+        `;
+        const kpiContainer = this.elements.kpiCpkCard?.parentElement;
+        if (kpiContainer?.parentNode) {
+            kpiContainer.parentNode.insertBefore(panel, kpiContainer.nextSibling);
+        }
     }
 
-    _refreshModalImage(imageUrl) {
-        const imgEl = document.getElementById('image-modal-img');
-        const noImgEl = document.getElementById('image-modal-no-img');
-        const deleteBtn = document.getElementById('image-modal-delete-btn');
+    _updateImagePanel(itemKey, itemName, imageUrl) {
+        this._currentItemKey = itemKey;
+        const panel = document.getElementById('item-image-panel');
+        if (!panel) return;
+        panel.classList.remove('hidden');
+        const titleEl = document.getElementById('item-image-panel-title');
+        if (titleEl) titleEl.textContent = `ตำแหน่งวัด — ${itemName || itemKey}`;
+        const imgEl = document.getElementById('item-image-inline');
+        const noneEl = document.getElementById('item-image-none');
+        const deleteBtn = document.getElementById('inline-delete-btn');
         if (imageUrl) {
             imgEl.src = imageUrl;
             imgEl.classList.remove('hidden');
-            noImgEl?.classList.add('hidden');
+            noneEl?.classList.add('hidden');
             deleteBtn?.classList.remove('hidden');
         } else {
             imgEl.src = '';
             imgEl.classList.add('hidden');
-            noImgEl?.classList.remove('hidden');
+            noneEl?.classList.remove('hidden');
             deleteBtn?.classList.add('hidden');
         }
     }
@@ -473,7 +512,7 @@ class DashboardUI {
             const json = await res.json();
             if (json.success && json.data?.url) {
                 ITEM_IMAGES[itemKey] = json.data.url;
-                this._refreshModalImage(json.data.url);
+                this._updateImagePanel(itemKey, null, json.data.url);
             } else {
                 alert('อัพโหลดไม่สำเร็จ: ' + (json.error || 'unknown error'));
             }
@@ -497,20 +536,19 @@ class DashboardUI {
             this._setModalUploading(false);
         }
         ITEM_IMAGES[itemKey] = '';
-        this._refreshModalImage('');
+        this._updateImagePanel(itemKey, null, '');
     }
 
     _setModalUploading(isLoading) {
-        const input = document.getElementById('image-modal-file-input');
-        const icon = document.getElementById('image-upload-icon');
-        const spinner = document.getElementById('image-upload-spinner');
-        const labelText = document.getElementById('image-upload-label-text');
-        const deleteBtn = document.getElementById('image-modal-delete-btn');
+        const input = document.getElementById('inline-file-input');
+        const icon = document.getElementById('inline-upload-icon');
+        const spinner = document.getElementById('inline-upload-spinner');
+        const labelText = document.getElementById('inline-upload-text');
+        const deleteBtn = document.getElementById('inline-delete-btn');
         if (input) input.disabled = isLoading;
         icon?.classList.toggle('hidden', isLoading);
         spinner?.classList.toggle('hidden', !isLoading);
         if (labelText) labelText.textContent = isLoading ? 'กำลังอัพโหลด...' : 'อัพโหลดรูปภาพ';
-        if (deleteBtn) deleteBtn.style.opacity = isLoading ? '0.4' : '1';
         if (deleteBtn) deleteBtn.disabled = isLoading;
     }
 
@@ -651,25 +689,17 @@ class DashboardUI {
     // ----- Bell Curve / P-Chart Container -----
 
     _ensureBellCurveDOM() {
+        this._ensureImagePanelDOM();
         if (document.getElementById('bell-curve-container')) return;
 
         const container = document.createElement('div');
         container.id = 'bell-curve-container';
-        container.className = 'bg-white p-4 rounded-xl shadow-sm border mt-6 mb-6 transition-all duration-500 ease-in-out';
+        container.className = 'bg-white p-4 rounded-xl shadow-sm border transition-all duration-500 ease-in-out';
         container.innerHTML = `
             <div class="flex justify-between items-center mb-4 border-b pb-2">
                 <h3 id="bell-curve-title" class="text-md font-bold text-gray-700">การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)</h3>
                 <div class="flex items-center gap-2">
                     <span id="bell-chart-title" class="text-xs bg-purple-100 text-purple-800 px-3 py-1 rounded-full font-bold"></span>
-                    <button id="bell-curve-img-btn"
-                        class="item-img-btn text-xs px-2 py-1 rounded-full border font-medium transition-colors border-gray-300 text-gray-500 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 flex items-center gap-1"
-                        data-item="" data-item-name="" title="ดูตำแหน่งวัด">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        ตำแหน่งวัด
-                    </button>
                     <button id="six-sigma-btn"
                         class="text-xs px-3 py-1 rounded-full border font-medium transition-colors border-gray-300 text-gray-500 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-600">
                         6σ View
@@ -708,9 +738,10 @@ class DashboardUI {
             </div>
         `;
 
-        const kpiContainer = this.elements.kpiCpkCard?.parentElement;
-        if (kpiContainer && kpiContainer.parentNode) {
-            kpiContainer.parentNode.insertBefore(container, kpiContainer.nextSibling);
+        // Insert bell curve AFTER the image panel (which sits after KPI cards)
+        const insertAfter = document.getElementById('item-image-panel') || this.elements.kpiCpkCard?.parentElement;
+        if (insertAfter?.parentNode) {
+            insertAfter.parentNode.insertBefore(container, insertAfter.nextSibling);
         }
 
         // bind toggle button
@@ -910,12 +941,9 @@ class DashboardUI {
         if (titleEl) titleEl.innerText = `${partName} - ${currentConfig.name ? currentConfig.name.split(':')[0] : ''}`;
         if (headerEl) headerEl.innerText = 'การวิเคราะห์การกระจายตัว (Histogram & Normal Curve)';
 
-        const imgBtn = document.getElementById('bell-curve-img-btn');
-        if (imgBtn) {
-            const paramKey = this.elements.paramSelect?.value || '';
-            imgBtn.dataset.item = paramKey;
-            imgBtn.dataset.itemName = currentConfig.name ? currentConfig.name.split(':')[0] : paramKey;
-        }
+        const paramKey = this.elements.paramSelect?.value || '';
+        const itemName = currentConfig.name ? currentConfig.name.split(':')[0] : paramKey;
+        this._updateImagePanel(paramKey, itemName, ITEM_IMAGES[paramKey] || '');
 
         const values = dataRecords.map(r => parseFloat(r.value)).filter(v => !isNaN(v));
 
@@ -1060,11 +1088,7 @@ class DashboardUI {
         if (titleEl) titleEl.innerText = `${partName} - Item 6 (Gauge)`;
         if (headerEl) headerEl.innerText = 'ประวัติการตรวจสอบ Gauge (P-Chart)';
 
-        const imgBtn = document.getElementById('bell-curve-img-btn');
-        if (imgBtn) {
-            imgBtn.dataset.item = 'item6';
-            imgBtn.dataset.itemName = 'Item 6';
-        }
+        this._updateImagePanel('item6', 'Item 6', ITEM_IMAGES['item6'] || '');
 
         const records = [...dataRecords].slice(-30);
 
@@ -1129,8 +1153,6 @@ class DashboardUI {
         }
         this.chartInstances = {};
 
-        const camSvg = `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
-
         for (const [key, spec] of Object.entries(specsObject)) {
             const wrapper = document.createElement('div');
             wrapper.className = 'bg-white p-4 rounded-xl shadow-sm border transition-all duration-500 ease-in-out';
@@ -1143,13 +1165,7 @@ class DashboardUI {
                 wrapper.innerHTML = `
                     <div class="flex justify-between items-center mb-2 border-b pb-2">
                         <h3 class="text-sm font-bold text-gray-700">${itemLabel}</h3>
-                        <div class="flex items-center gap-2">
-                            <span class="gauge-rate text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full font-bold">-</span>
-                            <button class="item-img-btn shrink-0 text-gray-400 hover:text-blue-600 transition-colors p-0.5 rounded"
-                                    data-item="${key}" data-item-name="${itemLabel}" title="ดูตำแหน่งวัด">
-                                ${camSvg}
-                            </button>
-                        </div>
+                        <span class="gauge-rate text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full font-bold">-</span>
                     </div>
                     <div class="relative h-48 w-full">
                         <canvas id="canvas-${key}"></canvas>
@@ -1189,13 +1205,7 @@ class DashboardUI {
                 const itemDim = (spec.name.split(':')[1] || spec.name).trim();
                 header.innerHTML = `
                     <h3 class="text-sm font-bold text-gray-700">${itemLabel}</h3>
-                    <div class="flex items-center gap-2 min-w-0">
-                        <span class="text-xs text-gray-500 truncate" title="${itemDim}">${itemDim}</span>
-                        <button class="item-img-btn shrink-0 text-gray-400 hover:text-blue-600 transition-colors p-0.5 rounded"
-                                data-item="${key}" data-item-name="${itemLabel}" title="ดูตำแหน่งวัด">
-                            ${camSvg}
-                        </button>
-                    </div>
+                    <span class="text-xs text-gray-500 truncate ml-2" title="${itemDim}">${itemDim}</span>
                 `;
 
                 const canvasContainer = document.createElement('div');
