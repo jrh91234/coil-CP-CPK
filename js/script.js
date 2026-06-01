@@ -592,17 +592,20 @@ class DashboardUI {
         }
     }
 
-    // คืนค่าผลลัพธ์ gauge ที่เลือก
+    // คืนค่าผลลัพธ์ gauge ทั้ง 3 แถว (กรองเฉพาะที่เลือกแล้ว)
     getGaugeSelection() {
-        return document.getElementById('gauge-result').value;
+        return Array.from(document.querySelectorAll('.gauge-result-input'))
+            .map(el => el.value)
+            .filter(v => v !== '');
     }
 
-    // รีเซ็ตการเลือก gauge
+    // รีเซ็ตการเลือก gauge ทุกแถว
     resetGaugeSelection() {
-        document.getElementById('gauge-result').value = '';
-        const base = 'flex-1 py-4 px-4 rounded-lg border-2 font-bold text-lg transition-colors border-gray-300 text-gray-500';
-        document.getElementById('gauge-pass-btn').className = base + ' hover:border-green-500 hover:text-green-600 hover:bg-green-50';
-        document.getElementById('gauge-fail-btn').className = base + ' hover:border-red-500 hover:text-red-600 hover:bg-red-50';
+        const basePass = 'gauge-pass-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm transition-colors border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50';
+        const baseFail = 'gauge-fail-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm transition-colors border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50';
+        document.querySelectorAll('.gauge-result-input').forEach(el => el.value = '');
+        document.querySelectorAll('.gauge-pass-btn').forEach(btn => btn.className = basePass);
+        document.querySelectorAll('.gauge-fail-btn').forEach(btn => btn.className = baseFail);
     }
 
     clearInput() {
@@ -1627,23 +1630,23 @@ class AppController {
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
         document.getElementById('add-value-btn').addEventListener('click', () => this.addMeasuredValueRow());
 
-        // Gauge buttons
-        const baseClass = 'flex-1 py-4 px-4 rounded-lg border-2 font-bold text-lg transition-colors';
-        const passSelected = `${baseClass} border-green-500 bg-green-50 text-green-700`;
-        const failSelected = `${baseClass} border-red-500 bg-red-50 text-red-700`;
-        const passIdle = `${baseClass} border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50`;
-        const failIdle = `${baseClass} border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50`;
-
-        document.getElementById('gauge-pass-btn').addEventListener('click', () => {
-            document.getElementById('gauge-result').value = 'PASS';
-            document.getElementById('gauge-pass-btn').className = passSelected;
-            document.getElementById('gauge-fail-btn').className = failIdle;
-        });
-
-        document.getElementById('gauge-fail-btn').addEventListener('click', () => {
-            document.getElementById('gauge-result').value = 'FAIL';
-            document.getElementById('gauge-fail-btn').className = failSelected;
-            document.getElementById('gauge-pass-btn').className = passIdle;
+        // Gauge buttons — event delegation ต่อแถว
+        const gaugeBase = 'flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm transition-colors';
+        document.getElementById('gauge-input-section').addEventListener('click', (e) => {
+            const row = e.target.closest('[data-gauge-row]');
+            if (!row) return;
+            const resultInput = row.querySelector('.gauge-result-input');
+            const passBtn = row.querySelector('.gauge-pass-btn');
+            const failBtn = row.querySelector('.gauge-fail-btn');
+            if (e.target.closest('.gauge-pass-btn')) {
+                resultInput.value = 'PASS';
+                passBtn.className = `gauge-pass-btn ${gaugeBase} border-green-500 bg-green-50 text-green-700`;
+                failBtn.className = `gauge-fail-btn ${gaugeBase} border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50`;
+            } else if (e.target.closest('.gauge-fail-btn')) {
+                resultInput.value = 'FAIL';
+                failBtn.className = `gauge-fail-btn ${gaugeBase} border-red-500 bg-red-50 text-red-700`;
+                passBtn.className = `gauge-pass-btn ${gaugeBase} border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50`;
+            }
         });
 
         // Date range filter — preset buttons ค้นหาทันที
@@ -1756,23 +1759,24 @@ class AppController {
         const spec = PART_SPECS[part]?.[param];
 
         if (spec?.type === 'gauge') {
-            // Gauge: บันทึก PASS หรือ FAIL 1 รายการ
-            const gaugeResult = this.ui.getGaugeSelection();
-            if (!gaugeResult) {
-                alert('กรุณาเลือกผลการตรวจสอบ (✓ ผ่าน หรือ ✗ ไม่ผ่าน)');
+            // Gauge: บันทึก PASS/FAIL ทั้ง 3 แถว
+            const gaugeResults = this.ui.getGaugeSelection();
+            if (gaugeResults.length < 3) {
+                alert('กรุณาเลือกผลการตรวจสอบทั้ง 3 ชิ้น');
                 return;
             }
 
-            const record = {
+            const base = {
                 machine: document.getElementById('machine-id').value,
                 part,
                 parameter: param,
-                operator: document.getElementById('operator').value,
-                value: gaugeResult
+                operator: document.getElementById('operator').value
             };
 
             this.ui.setLoadingState(true);
-            await this.db.save(record);
+            for (const value of gaugeResults) {
+                await this.db.save({ ...base, value });
+            }
             this.ui.setLoadingState(false);
 
             this.ui.resetGaugeSelection();

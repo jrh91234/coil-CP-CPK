@@ -78,18 +78,27 @@
                 <!-- Gauge input section (ซ่อน/แสดงเฉพาะ Item 6) -->
                 <div id="gauge-input-section" class="hidden">
                     <label class="block text-sm font-medium text-gray-600 mb-2">ผลการตรวจสอบ Gauge</label>
-                    <div class="flex gap-3">
-                        <button type="button" id="gauge-pass-btn"
-                            class="flex-1 py-4 px-4 rounded-lg border-2 font-bold text-lg border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50 transition-colors">
-                            ✓ ผ่าน
-                        </button>
-                        <button type="button" id="gauge-fail-btn"
-                            class="flex-1 py-4 px-4 rounded-lg border-2 font-bold text-lg border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50 transition-colors">
-                            ✗ ไม่ผ่าน
-                        </button>
+                    <div class="space-y-2" id="gauge-rows-container">
+                        <div class="flex items-center gap-2" data-gauge-row="0">
+                            <span class="text-xs text-gray-400 w-5 text-right shrink-0">1.</span>
+                            <button type="button" class="gauge-pass-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50 transition-colors">✓ ผ่าน</button>
+                            <button type="button" class="gauge-fail-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50 transition-colors">✗ ไม่ผ่าน</button>
+                            <input type="hidden" class="gauge-result-input" value="">
+                        </div>
+                        <div class="flex items-center gap-2" data-gauge-row="1">
+                            <span class="text-xs text-gray-400 w-5 text-right shrink-0">2.</span>
+                            <button type="button" class="gauge-pass-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50 transition-colors">✓ ผ่าน</button>
+                            <button type="button" class="gauge-fail-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50 transition-colors">✗ ไม่ผ่าน</button>
+                            <input type="hidden" class="gauge-result-input" value="">
+                        </div>
+                        <div class="flex items-center gap-2" data-gauge-row="2">
+                            <span class="text-xs text-gray-400 w-5 text-right shrink-0">3.</span>
+                            <button type="button" class="gauge-pass-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50 transition-colors">✓ ผ่าน</button>
+                            <button type="button" class="gauge-fail-btn flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50 transition-colors">✗ ไม่ผ่าน</button>
+                            <input type="hidden" class="gauge-result-input" value="">
+                        </div>
                     </div>
-                    <input type="hidden" id="gauge-result" value="">
-                    <p class="text-center mt-2 text-xs text-gray-400">บันทึก 1 รายการต่อ 1 ครั้งตรวจ</p>
+                    <p class="text-center mt-2 text-xs text-gray-400">บันทึก 3 รายการต่อ 1 ครั้งตรวจ</p>
                 </div>
 
                 <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100"></p>
