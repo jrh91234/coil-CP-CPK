@@ -215,6 +215,19 @@ function doPost(e) {
   }
 }
 
+/**
+ * =========================================================================
+ * MODULE 4: AUTHORIZATION HELPER
+ * =========================================================================
+ * วิธีใช้: เลือกฟังก์ชัน authorizeApp แล้วกด ▶ Run ใน Apps Script editor
+ * ระบบจะขอสิทธิ์ Google Drive → กด Allow แล้ว deploy ใหม่ 1 ครั้ง
+ */
+function authorizeApp() {
+  DriveApp.getRootFolder();
+  SpreadsheetApp.getActiveSpreadsheet();
+  Logger.log('✅ Authorization complete — Drive + Sheets permissions granted.');
+}
+
 function doGet(e) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
