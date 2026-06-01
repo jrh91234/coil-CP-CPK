@@ -491,13 +491,13 @@ class DashboardUI {
             reader.onload = ev => {
                 const img = new Image();
                 img.onload = () => {
-                    const MAX_W = 1400;
+                    const MAX_W = 500;
                     let w = img.width, h = img.height;
                     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
                     const canvas = document.createElement('canvas');
                     canvas.width = w; canvas.height = h;
                     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                    resolve(canvas.toDataURL('image/jpeg', 0.85));
+                    resolve(canvas.toDataURL('image/jpeg', 0.70));
                 };
                 img.src = ev.target.result;
             };
@@ -509,11 +509,9 @@ class DashboardUI {
         this._setModalUploading(true);
         try {
             const dataUrl = await this._compressToDataUrl(file);
-            const [header, base64] = dataUrl.split(',');
-            const mimeType = header.match(/:(.*?);/)[1];
             const res = await fetch(AppConfig.GOOGLE_SHEET_URL, {
                 method: 'POST',
-                body: JSON.stringify({ action: 'upload_image', itemKey, imageData: base64, mimeType })
+                body: JSON.stringify({ action: 'upload_image', itemKey, dataUrl })
             });
             const json = await res.json();
             if (json.success && json.data?.url) {
