@@ -1328,12 +1328,15 @@ class DashboardUI {
                         maintainAspectRatio: false,
                         plugins: { legend: { display: false } },
                         scales: {
-                            x: {
-                                ticks: {
-                                    display: true,
-                                    maxRotation: 45
-                                }
-                            }
+                            x: { ticks: { display: true, maxRotation: 45 } }
+                        },
+                        onClick: (event, elements) => {
+                            if (elements.length) this._handleNumericChartClick(key, elements);
+                        },
+                        onHover: (event, elements) => {
+                            const c = this.chartInstances[key];
+                            const canDrill = elements.length > 0 && c?._isMultiDay && !c?._isDrilling;
+                            if (event.native?.target) event.native.target.style.cursor = canDrill ? 'pointer' : 'default';
                         }
                     }
                 });
@@ -1399,8 +1402,89 @@ class DashboardUI {
                 }
 
                 chart.update();
+
+                // เก็บ state สำหรับ drill-down
+                const isoSet = new Set(paramRecords.map(r => {
+                    const d = StatUtils.parseThaiDate(r.timestamp);
+                    return d ? StatUtils.dateToISO(d) : '?';
+                }));
+                chart._allRecords = paramRecords;
+                chart._spec = spec;
+                chart._isMultiDay = isoSet.size > 1;
+                chart._isDrilling = false;
+                document.getElementById(`chart-wrapper-${key}`)?.querySelector('.drilldown-badge')?.remove();
             }
         }
+    }
+
+    // Drill-down: คลิกจุดข้อมูลในมุมมองหลายวัน → ซูมเข้าแสดงรายเวลาของวันนั้น
+    _handleNumericChartClick(key, elements) {
+        const chart = this.chartInstances[key];
+        if (!chart || !chart._isMultiDay || chart._isDrilling) return;
+
+        // สร้าง grouped map วัน → records[]
+        const grouped = {};
+        (chart._allRecords || []).forEach(r => {
+            const d = StatUtils.parseThaiDate(r.timestamp);
+            const iso = d ? StatUtils.dateToISO(d) : null;
+            if (!iso) return;
+            if (!grouped[iso]) grouped[iso] = [];
+            grouped[iso].push(r);
+        });
+        const sortedDays = Object.keys(grouped).sort();
+        const clickedISO = sortedDays[elements[0].index];
+        if (!clickedISO) return;
+
+        // สร้าง time-series สำหรับวันที่คลิก
+        const dayRecords = grouped[clickedISO];
+        const rawLabels = dayRecords.map(r => {
+            const parts = String(r.timestamp).replace(',', '').trim().split(' ');
+            return (parts[1] || '').substring(0, 5);
+        });
+        const rawValues = dayRecords.map(r => parseFloat(r.value));
+        const labels = rawLabels.length === 1 ? ['', ...rawLabels] : rawLabels;
+        const values = rawValues.length === 1 ? [null, ...rawValues] : rawValues;
+
+        const spec = chart._spec;
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = values;
+        chart.data.datasets[1].data = Array(labels.length).fill(spec.usl);
+        chart.data.datasets[2].data = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
+        chart.options.scales.x.ticks.maxRotation = 0;
+        chart._isDrilling = true;
+        chart.update();
+
+        const [y, m, d] = clickedISO.split('-');
+        this._showDrillDownBadge(key, `${parseInt(d)}/${parseInt(m)}/${y}`);
+    }
+
+    _showDrillDownBadge(key, dateLabel) {
+        const wrapper = document.getElementById(`chart-wrapper-${key}`);
+        if (!wrapper) return;
+        wrapper.querySelector('.drilldown-badge')?.remove();
+        const badge = document.createElement('div');
+        badge.className = 'drilldown-badge flex items-center justify-between mt-2 pt-2 border-t';
+        badge.innerHTML = `
+            <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">📅 ${dateLabel}</span>
+            <button class="drillback-btn text-xs text-gray-500 hover:text-blue-600 font-medium transition-colors">← ภาพรวม</button>
+        `;
+        wrapper.appendChild(badge);
+        badge.querySelector('.drillback-btn').onclick = () => this._resetChartDrillDown(key);
+    }
+
+    _resetChartDrillDown(key) {
+        const chart = this.chartInstances[key];
+        if (!chart) return;
+        const { labels, values } = DashboardUI._buildNumericChartData(chart._allRecords || []);
+        const spec = chart._spec;
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = values;
+        chart.data.datasets[1].data = Array(labels.length).fill(spec.usl);
+        chart.data.datasets[2].data = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
+        chart.options.scales.x.ticks.maxRotation = 45;
+        chart._isDrilling = false;
+        chart.update();
+        document.getElementById(`chart-wrapper-${key}`)?.querySelector('.drilldown-badge')?.remove();
     }
 
     // สร้าง labels + values สำหรับ numeric chart แบบ smart:
