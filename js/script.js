@@ -556,6 +556,93 @@ class DashboardUI {
         if (deleteBtn) deleteBtn.disabled = isLoading;
     }
 
+    // ---- Input Validation Helpers ----
+
+    _checkDecimalTypo(value, spec) {
+        if (!spec || spec.type === 'gauge') return null;
+        const ref = spec.target || spec.usl || spec.lsl;
+        if (!ref || Math.abs(ref) < 0.001) return null;
+        // ค่าต้องใหญ่กว่า ref อย่างน้อย 2x ถึงจะถือว่าน่าสงสัย
+        if (Math.abs(value) <= Math.abs(ref) * 2) return null;
+        for (const factor of [10, 100]) {
+            const adj = value / factor;
+            const ratio = adj / ref;
+            if (ratio >= 0.3 && ratio <= 3.0) return parseFloat(adj.toFixed(3));
+        }
+        return null;
+    }
+
+    _checkCrossItemMatch(value, currentParam, currentSpec, partSpecs) {
+        // เตือนเฉพาะกรณีที่ค่าอยู่นอก range ของ item ปัจจุบัน
+        const inCurrent = (currentSpec.lsl === null || value >= currentSpec.lsl) &&
+                          (currentSpec.usl === null || value <= currentSpec.usl);
+        if (inCurrent) return null;
+        for (const [key, spec] of Object.entries(partSpecs)) {
+            if (key === currentParam || spec.type === 'gauge') continue;
+            if (spec.lsl !== null && spec.usl !== null && value >= spec.lsl && value <= spec.usl) {
+                return { name: spec.name.split(':')[0], lsl: spec.lsl, usl: spec.usl };
+            }
+        }
+        return null;
+    }
+
+    validateAndWarn(values, currentParam, currentSpec, partSpecs, specName, onConfirm) {
+        const warnings = [];
+        const seen = new Set();
+        for (const v of values) {
+            const num = parseFloat(v);
+            if (isNaN(num)) continue;
+            const suggestion = this._checkDecimalTypo(num, currentSpec);
+            if (suggestion !== null && !seen.has(`d${num}`)) {
+                seen.add(`d${num}`);
+                warnings.push(`ค่า <b>${num}</b> — ลืมจุดทศนิยมหรือไม่? อาจตั้งใจพิมพ์ <b>${suggestion}</b>`);
+            }
+            const match = this._checkCrossItemMatch(num, currentParam, currentSpec, partSpecs);
+            if (match && !seen.has(`c${num}`)) {
+                seen.add(`c${num}`);
+                warnings.push(`ค่า <b>${num}</b> ตรงกับ range ของ <b>${match.name}</b> (${match.lsl}–${match.usl}) ไม่ใช่ ${specName}`);
+            }
+        }
+        if (warnings.length === 0) { onConfirm(); return; }
+        this._showWarningModal(warnings, specName, onConfirm);
+    }
+
+    _showWarningModal(warnings, specName, onConfirm) {
+        let modal = document.getElementById('validation-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'validation-modal';
+            document.body.appendChild(modal);
+        }
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div class="bg-yellow-50 border-b border-yellow-200 px-5 py-3 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    <h3 class="text-sm font-bold text-yellow-800">ตรวจพบค่าที่น่าสงสัย</h3>
+                </div>
+                <div class="px-5 py-4 space-y-2.5">
+                    ${warnings.map(w => `
+                        <div class="flex items-start gap-2 text-sm text-gray-700">
+                            <span class="text-yellow-500 mt-0.5 shrink-0">⚠</span>
+                            <p class="leading-relaxed">${w}</p>
+                        </div>`).join('')}
+                    <p class="text-xs text-gray-500 pt-3 border-t">
+                        ยืนยันว่า <b>${specName}</b> คือ Item ที่เลือกถูกต้อง และค่าที่กรอกถูกต้องแล้ว?
+                    </p>
+                </div>
+                <div class="grid grid-cols-2 gap-2 px-5 pb-4">
+                    <button id="val-modal-cancel" class="py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">← กลับไปแก้ไข</button>
+                    <button id="val-modal-confirm" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-colors">ยืนยันส่งข้อมูล →</button>
+                </div>
+            </div>
+        `;
+        document.getElementById('val-modal-cancel').onclick = () => modal.remove();
+        document.getElementById('val-modal-confirm').onclick = () => { modal.remove(); onConfirm(); };
+    }
+
     setStatus(text, colorClass) {
         this.elements.statusText.innerText = text;
         this.elements.statusText.className = `${colorClass} font-semibold`;
@@ -1797,14 +1884,17 @@ class AppController {
             operator: document.getElementById('operator').value
         };
 
-        this.ui.setLoadingState(true);
-        for (const value of values) {
-            await this.db.save({ ...base, value });
-        }
-        this.ui.setLoadingState(false);
-
-        this.ui.clearInput();
-        this.refreshDashboard(true, true);
+        const specName = this.currentConfig.name?.split(':')[0] || param;
+        this.ui.validateAndWarn(values, param, this.currentConfig, PART_SPECS[part], specName, async () => {
+            this.ui.setLoadingState(true);
+            for (const value of values) {
+                await this.db.save({ ...base, value });
+            }
+            this.ui.setLoadingState(false);
+            this.ui.clearInput();
+            this.refreshDashboard(true, true);
+        });
+        return;
     }
 
     _setSearchLoading(isLoading) {
