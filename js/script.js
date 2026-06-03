@@ -7,6 +7,75 @@ const AppConfig = {
     USE_GOOGLE_SHEET: true // เปลี่ยนเป็น false หากต้องการทดสอบแบบ In-Memory โดยไม่ต่อเน็ต
 };
 
+// ตารางการสุ่มตัวอย่างทุก 2 ชั่วโมง (เว้นช่วงพัก)
+const SAMPLING_SCHEDULE = {
+    day:   { slots: ['08:01','10:01','13:00','15:00','17:30','19:30'] }, // กะเช้า 08:01-20:01
+    night: { slots: ['20:01','22:01','01:00','03:00','05:30','07:30'] }  // กะดึก 20:01-08:00
+};
+
+// Chart.js plugin: เส้นแนวตั้งประสีส้มแสดงเวลาสุ่มตัวอย่าง (ใช้เฉพาะ drill-down view)
+const _samplingLinesPlugin = {
+    id: 'samplingLines',
+    afterDraw(chart) {
+        const slots = chart._samplingSlots;
+        if (!slots || !slots.length) return;
+        const isNight = chart._isNightShift || false;
+        const labels = chart.data.labels;
+        const xScale = chart.scales.x;
+        const ctx = chart.ctx;
+        const { top, bottom } = chart.chartArea;
+
+        const toMins = t => {
+            const m = String(t || '').match(/^(\d{2}):(\d{2})$/);
+            if (!m) return -1;
+            let v = +m[1] * 60 + +m[2];
+            if (isNight && v < 720) v += 1440; // หลังเที่ยงคืนให้นับเป็นวันถัดไป
+            return v;
+        };
+        const labelMins = labels.map(toMins);
+
+        slots.forEach(slot => {
+            const sm = toMins(slot);
+            if (sm < 0) return;
+
+            let px = null;
+            const exactIdx = labelMins.indexOf(sm);
+            if (exactIdx >= 0) {
+                px = xScale.getPixelForValue(exactIdx);
+            } else {
+                let bi = -1, ai = -1;
+                for (let i = 0; i < labelMins.length; i++) {
+                    if (labelMins[i] >= 0 && labelMins[i] <= sm) bi = i;
+                    if (ai < 0 && labelMins[i] >= 0 && labelMins[i] > sm) ai = i;
+                }
+                if (bi >= 0 && ai >= 0) {
+                    const t = (sm - labelMins[bi]) / (labelMins[ai] - labelMins[bi]);
+                    px = xScale.getPixelForValue(bi) + t * (xScale.getPixelForValue(ai) - xScale.getPixelForValue(bi));
+                } else if (bi >= 0) {
+                    px = xScale.getPixelForValue(bi);
+                } else if (ai >= 0) {
+                    px = xScale.getPixelForValue(ai);
+                }
+            }
+            if (px === null) return;
+
+            ctx.save();
+            ctx.strokeStyle = 'rgba(251,146,60,0.75)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 4]);
+            ctx.beginPath();
+            ctx.moveTo(px, top);
+            ctx.lineTo(px, bottom);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(194,65,12,0.9)';
+            ctx.font = 'bold 8px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(slot, px, top + 10);
+            ctx.restore();
+        });
+    }
+};
+
 // อัปเดตชื่อ Part ให้ตรงกับค่าใน Google Sheet หน้า Config เป๊ะๆ
 const PART_SPECS = {
     "S1B29288-JR (10A)": { // 10A
@@ -1237,6 +1306,9 @@ class DashboardUI {
         if (this.elements.overviewPartTitle) this.elements.overviewPartTitle.innerText = partName;
         if (!this.elements.chartsContainer) return;
 
+        // ลงทะเบียน plugin เส้นสุ่มตัวอย่างครั้งเดียว
+        if (!Chart.registry.plugins.get('samplingLines')) Chart.register(_samplingLinesPlugin);
+
         this.elements.chartsContainer.innerHTML = '';
 
         // Destroy existing chart instances before recreating
@@ -1445,6 +1517,12 @@ class DashboardUI {
         const labels = rawLabels.length === 1 ? ['', ...rawLabels] : rawLabels;
         const values = rawValues.length === 1 ? [null, ...rawValues] : rawValues;
 
+        // หา shift และ slots สำหรับวันที่คลิก
+        const slots = this._getShiftSlots(rawLabels.find(t => /^\d{2}:\d{2}$/.test(t)));
+        const isNight = slots === SAMPLING_SCHEDULE.night.slots;
+        chart._samplingSlots = slots;
+        chart._isNightShift = isNight;
+
         const spec = chart._spec;
         chart.data.labels = labels;
         chart.data.datasets[0].data = values;
@@ -1455,18 +1533,50 @@ class DashboardUI {
         chart.update();
 
         const [y, m, d] = clickedISO.split('-');
-        this._showDrillDownBadge(key, `${parseInt(d)}/${parseInt(m)}/${y}`);
+        this._showDrillDownBadge(key, `${parseInt(d)}/${parseInt(m)}/${y}`, slots, rawLabels, isNight);
     }
 
-    _showDrillDownBadge(key, dateLabel) {
+    _getShiftSlots(firstTimeHHMM) {
+        if (!firstTimeHHMM) return [];
+        const m = String(firstTimeHHMM).match(/^(\d{2}):(\d{2})$/);
+        if (!m) return [];
+        const mins = +m[1] * 60 + +m[2];
+        return (mins >= 481 && mins < 1201) ? SAMPLING_SCHEDULE.day.slots : SAMPLING_SCHEDULE.night.slots;
+    }
+
+    _showDrillDownBadge(key, dateLabel, slots = [], recordTimes = [], isNight = false) {
         const wrapper = document.getElementById(`chart-wrapper-${key}`);
         if (!wrapper) return;
         wrapper.querySelector('.drilldown-badge')?.remove();
+
+        // สร้าง compliance badges สำหรับแต่ละ slot
+        const toMins = t => {
+            const m = String(t || '').match(/^(\d{2}):(\d{2})$/);
+            if (!m) return -1;
+            let v = +m[1] * 60 + +m[2];
+            if (isNight && v < 720) v += 1440;
+            return v;
+        };
+        const recMins = recordTimes.map(toMins).filter(v => v >= 0);
+        const slotBadgesHtml = slots.map(slot => {
+            const sm = toMins(slot);
+            const covered = recMins.some(rm => Math.abs(rm - sm) <= 45);
+            const cls = covered
+                ? 'bg-green-100 text-green-700'
+                : 'bg-red-100 text-red-600';
+            return `<span class="text-xs ${cls} px-1.5 py-0.5 rounded font-medium">${slot} ${covered ? '✓' : '✗'}</span>`;
+        }).join('');
+
         const badge = document.createElement('div');
-        badge.className = 'drilldown-badge flex items-center justify-between mt-2 pt-2 border-t';
+        badge.className = 'drilldown-badge flex flex-col gap-1.5 mt-2 pt-2 border-t';
         badge.innerHTML = `
-            <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">📅 ${dateLabel}</span>
-            <button class="drillback-btn text-xs text-gray-500 hover:text-blue-600 font-medium transition-colors">← ภาพรวม</button>
+            <div class="flex items-center justify-between">
+                <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">📅 ${dateLabel}</span>
+                <button class="drillback-btn text-xs text-gray-500 hover:text-blue-600 font-medium transition-colors">← ภาพรวม</button>
+            </div>
+            ${slots.length ? `<div class="flex flex-wrap gap-1 items-center">
+                <span class="text-xs text-gray-400">สุ่มตัวอย่าง:</span>${slotBadgesHtml}
+            </div>` : ''}
         `;
         wrapper.appendChild(badge);
         badge.querySelector('.drillback-btn').onclick = () => this._resetChartDrillDown(key);
@@ -1483,6 +1593,8 @@ class DashboardUI {
         chart.data.datasets[2].data = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
         chart.options.scales.x.ticks.maxRotation = 45;
         chart._isDrilling = false;
+        chart._samplingSlots = [];
+        chart._isNightShift = false;
         chart.update();
         document.getElementById(`chart-wrapper-${key}`)?.querySelector('.drilldown-badge')?.remove();
     }
