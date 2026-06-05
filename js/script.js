@@ -199,6 +199,14 @@ class StatUtils {
         return `${y}-${m}-${day}`;
     }
 
+    // วันผลิต: ก่อน 08:00 นับเป็นวันก่อนหน้า (shift boundary 08:00→07:59)
+    static prodDateISO(timestamp) {
+        const dt = StatUtils.parseThaiDateTime(timestamp);
+        if (!dt) return '?';
+        if (dt.getHours() < 8) dt.setDate(dt.getDate() - 1);
+        return StatUtils.dateToISO(dt);
+    }
+
     // Standard normal CDF (Abramowitz & Stegun approximation)
     static normalCDF(z) {
         const t = 1 / (1 + 0.2316419 * Math.abs(z));
@@ -1504,10 +1512,7 @@ class DashboardUI {
                 chart.update();
 
                 // เก็บ state สำหรับ drill-down
-                const isoSet = new Set(paramRecords.map(r => {
-                    const d = StatUtils.parseThaiDate(r.timestamp);
-                    return d ? StatUtils.dateToISO(d) : '?';
-                }));
+                const isoSet = new Set(paramRecords.map(r => StatUtils.prodDateISO(r.timestamp)));
                 chart._allRecords = paramRecords;
                 chart._spec = spec;
                 chart._isMultiDay = isoSet.size > 1;
@@ -1522,12 +1527,11 @@ class DashboardUI {
         const chart = this.chartInstances[key];
         if (!chart || !chart._isMultiDay || chart._isDrilling) return;
 
-        // สร้าง grouped map วัน → records[]
+        // สร้าง grouped map วันผลิต (08:00-07:59) → records[]
         const grouped = {};
         (chart._allRecords || []).forEach(r => {
-            const d = StatUtils.parseThaiDate(r.timestamp);
-            const iso = d ? StatUtils.dateToISO(d) : null;
-            if (!iso) return;
+            const iso = StatUtils.prodDateISO(r.timestamp);
+            if (!iso || iso === '?') return;
             if (!grouped[iso]) grouped[iso] = [];
             grouped[iso].push(r);
         });
@@ -1645,17 +1649,15 @@ class DashboardUI {
             return { labels: ['(ว่าง)', '(รอข้อมูล)'], values: [null, null] };
         }
 
-        // ตรวจสอบว่าข้ามวันหรือไม่
-        const dates = records.map(r => StatUtils.parseThaiDate(r.timestamp));
-        const isoSet = new Set(dates.map(d => d ? StatUtils.dateToISO(d) : '?'));
+        // ตรวจสอบว่าข้ามวันผลิต (08:00-07:59) หรือไม่
+        const isoSet = new Set(records.map(r => StatUtils.prodDateISO(r.timestamp)));
         const spansMultipleDays = isoSet.size > 1;
 
         if (spansMultipleDays) {
-            // กลุ่มรายวัน: คำนวณค่าเฉลี่ยต่อวัน
+            // กลุ่มรายวันผลิต: คำนวณค่าเฉลี่ยต่อวัน
             const grouped = {};
             records.forEach(r => {
-                const d = StatUtils.parseThaiDate(r.timestamp);
-                const key = d ? StatUtils.dateToISO(d) : '?';
+                const key = StatUtils.prodDateISO(r.timestamp);
                 if (!grouped[key]) grouped[key] = [];
                 const v = parseFloat(r.value);
                 if (!isNaN(v)) grouped[key].push(v);
