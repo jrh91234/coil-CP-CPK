@@ -9,17 +9,24 @@ const AppConfig = {
 
 // ตารางการสุ่มตัวอย่างทุก 2 ชั่วโมง (เว้นช่วงพัก)
 const SAMPLING_SCHEDULE = {
-    day:   { slots: ['08:01','10:01','13:00','15:00','17:30','19:30'] }, // กะเช้า 08:01-20:01
-    night: { slots: ['20:01','22:01','01:00','03:00','05:30','07:30'] }  // กะดึก 20:01-08:00
+    day: {
+        slots:  ['08:01','10:01','13:00','15:00','17:30','19:30'], // กะเช้า 08:01-20:00
+        breaks: [['12:00','13:00'],['17:00','17:30']]              // พักกลางวัน, พักเย็น
+    },
+    night: {
+        slots:  ['20:01','22:01','01:00','03:00','05:30','07:30'], // กะดึก 20:01-08:00
+        breaks: [['00:00','01:00'],['05:00','05:30']]              // พักเที่ยงคืน, พักเช้า
+    }
 };
 
-// Chart.js plugin: เส้นแนวตั้งประสีส้มแสดงเวลาสุ่มตัวอย่าง (ใช้เฉพาะ drill-down view)
+// Chart.js plugin: เส้นแนวตั้งประสีส้มแสดงเวลาสุ่มตัวอย่าง + แถบเทาช่วงพัก (ใช้เฉพาะ drill-down view)
 const _samplingLinesPlugin = {
     id: 'samplingLines',
     afterDraw(chart) {
         const slots = chart._samplingSlots;
         if (!slots || !slots.length) return;
         const isNight = chart._isNightShift || false;
+        const breaks = chart._shiftBreaks || [];
         const labels = chart.data.labels;
         const xScale = chart.scales.x;
         const ctx = chart.ctx;
@@ -34,29 +41,50 @@ const _samplingLinesPlugin = {
         };
         const labelMins = labels.map(toMins);
 
+        const getPx = sm => {
+            if (sm < 0) return null;
+            const exactIdx = labelMins.indexOf(sm);
+            if (exactIdx >= 0) return xScale.getPixelForValue(exactIdx);
+            let bi = -1, ai = -1;
+            for (let i = 0; i < labelMins.length; i++) {
+                if (labelMins[i] >= 0 && labelMins[i] <= sm) bi = i;
+                if (ai < 0 && labelMins[i] >= 0 && labelMins[i] > sm) ai = i;
+            }
+            if (bi >= 0 && ai >= 0) {
+                const t = (sm - labelMins[bi]) / (labelMins[ai] - labelMins[bi]);
+                return xScale.getPixelForValue(bi) + t * (xScale.getPixelForValue(ai) - xScale.getPixelForValue(bi));
+            }
+            if (bi >= 0) return xScale.getPixelForValue(bi);
+            if (ai >= 0) return xScale.getPixelForValue(ai);
+            return null;
+        };
+
+        // วาดแถบสีเทาช่วงพัก
+        breaks.forEach(([bStart, bEnd]) => {
+            const psm = toMins(bStart);
+            const pem = toMins(bEnd);
+            const px1 = getPx(psm);
+            const px2 = getPx(pem);
+            if (px1 === null || px2 === null) return;
+            ctx.save();
+            ctx.fillStyle = 'rgba(156,163,175,0.18)';
+            ctx.fillRect(px1, top, px2 - px1, bottom - top);
+            ctx.strokeStyle = 'rgba(156,163,175,0.5)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath(); ctx.moveTo(px1, top); ctx.lineTo(px1, bottom); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(px2, top); ctx.lineTo(px2, bottom); ctx.stroke();
+            ctx.fillStyle = 'rgba(107,114,128,0.75)';
+            ctx.font = 'bold 7px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('พัก', (px1 + px2) / 2, top + 10);
+            ctx.restore();
+        });
+
+        // วาดเส้นส้มเวลาสุ่มตัวอย่าง
         slots.forEach(slot => {
             const sm = toMins(slot);
-            if (sm < 0) return;
-
-            let px = null;
-            const exactIdx = labelMins.indexOf(sm);
-            if (exactIdx >= 0) {
-                px = xScale.getPixelForValue(exactIdx);
-            } else {
-                let bi = -1, ai = -1;
-                for (let i = 0; i < labelMins.length; i++) {
-                    if (labelMins[i] >= 0 && labelMins[i] <= sm) bi = i;
-                    if (ai < 0 && labelMins[i] >= 0 && labelMins[i] > sm) ai = i;
-                }
-                if (bi >= 0 && ai >= 0) {
-                    const t = (sm - labelMins[bi]) / (labelMins[ai] - labelMins[bi]);
-                    px = xScale.getPixelForValue(bi) + t * (xScale.getPixelForValue(ai) - xScale.getPixelForValue(bi));
-                } else if (bi >= 0) {
-                    px = xScale.getPixelForValue(bi);
-                } else if (ai >= 0) {
-                    px = xScale.getPixelForValue(ai);
-                }
-            }
+            const px = getPx(sm);
             if (px === null) return;
 
             ctx.save();
@@ -169,6 +197,14 @@ class StatUtils {
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
         return `${y}-${m}-${day}`;
+    }
+
+    // วันผลิต: ก่อน 08:00 นับเป็นวันก่อนหน้า (shift boundary 08:00→07:59)
+    static prodDateISO(timestamp) {
+        const dt = StatUtils.parseThaiDateTime(timestamp);
+        if (!dt) return '?';
+        if (dt.getHours() < 8) dt.setDate(dt.getDate() - 1);
+        return StatUtils.dateToISO(dt);
     }
 
     // Standard normal CDF (Abramowitz & Stegun approximation)
@@ -1476,10 +1512,7 @@ class DashboardUI {
                 chart.update();
 
                 // เก็บ state สำหรับ drill-down
-                const isoSet = new Set(paramRecords.map(r => {
-                    const d = StatUtils.parseThaiDate(r.timestamp);
-                    return d ? StatUtils.dateToISO(d) : '?';
-                }));
+                const isoSet = new Set(paramRecords.map(r => StatUtils.prodDateISO(r.timestamp)));
                 chart._allRecords = paramRecords;
                 chart._spec = spec;
                 chart._isMultiDay = isoSet.size > 1;
@@ -1494,12 +1527,11 @@ class DashboardUI {
         const chart = this.chartInstances[key];
         if (!chart || !chart._isMultiDay || chart._isDrilling) return;
 
-        // สร้าง grouped map วัน → records[]
+        // สร้าง grouped map วันผลิต (08:00-07:59) → records[]
         const grouped = {};
         (chart._allRecords || []).forEach(r => {
-            const d = StatUtils.parseThaiDate(r.timestamp);
-            const iso = d ? StatUtils.dateToISO(d) : null;
-            if (!iso) return;
+            const iso = StatUtils.prodDateISO(r.timestamp);
+            if (!iso || iso === '?') return;
             if (!grouped[iso]) grouped[iso] = [];
             grouped[iso].push(r);
         });
@@ -1518,10 +1550,12 @@ class DashboardUI {
         const values = rawValues.length === 1 ? [null, ...rawValues] : rawValues;
 
         // หา shift และ slots สำหรับวันที่คลิก
-        const slots = this._getShiftSlots(rawLabels.find(t => /^\d{2}:\d{2}$/.test(t)));
-        const isNight = slots === SAMPLING_SCHEDULE.night.slots;
+        const shift = this._getShift(rawLabels.find(t => /^\d{2}:\d{2}$/.test(t)));
+        const slots = shift.slots;
+        const isNight = shift === SAMPLING_SCHEDULE.night;
         chart._samplingSlots = slots;
         chart._isNightShift = isNight;
+        chart._shiftBreaks = shift.breaks || [];
 
         const spec = chart._spec;
         chart.data.labels = labels;
@@ -1533,18 +1567,18 @@ class DashboardUI {
         chart.update();
 
         const [y, m, d] = clickedISO.split('-');
-        this._showDrillDownBadge(key, `${parseInt(d)}/${parseInt(m)}/${y}`, slots, rawLabels, isNight);
+        this._showDrillDownBadge(key, `${parseInt(d)}/${parseInt(m)}/${y}`, slots, rawLabels, isNight, shift.breaks || []);
     }
 
-    _getShiftSlots(firstTimeHHMM) {
-        if (!firstTimeHHMM) return [];
+    _getShift(firstTimeHHMM) {
+        if (!firstTimeHHMM) return SAMPLING_SCHEDULE.night;
         const m = String(firstTimeHHMM).match(/^(\d{2}):(\d{2})$/);
-        if (!m) return [];
+        if (!m) return SAMPLING_SCHEDULE.night;
         const mins = +m[1] * 60 + +m[2];
-        return (mins >= 481 && mins < 1201) ? SAMPLING_SCHEDULE.day.slots : SAMPLING_SCHEDULE.night.slots;
+        return (mins >= 481 && mins < 1201) ? SAMPLING_SCHEDULE.day : SAMPLING_SCHEDULE.night;
     }
 
-    _showDrillDownBadge(key, dateLabel, slots = [], recordTimes = [], isNight = false) {
+    _showDrillDownBadge(key, dateLabel, slots = [], recordTimes = [], isNight = false, breaks = []) {
         const wrapper = document.getElementById(`chart-wrapper-${key}`);
         if (!wrapper) return;
         wrapper.querySelector('.drilldown-badge')?.remove();
@@ -1567,6 +1601,10 @@ class DashboardUI {
             return `<span class="text-xs ${cls} px-1.5 py-0.5 rounded font-medium">${slot} ${covered ? '✓' : '✗'}</span>`;
         }).join('');
 
+        const breakBadgesHtml = breaks.map(([s, e]) =>
+            `<span class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium">${s}–${e}</span>`
+        ).join('');
+
         const badge = document.createElement('div');
         badge.className = 'drilldown-badge flex flex-col gap-1.5 mt-2 pt-2 border-t';
         badge.innerHTML = `
@@ -1576,6 +1614,9 @@ class DashboardUI {
             </div>
             ${slots.length ? `<div class="flex flex-wrap gap-1 items-center">
                 <span class="text-xs text-gray-400">สุ่มตัวอย่าง:</span>${slotBadgesHtml}
+            </div>` : ''}
+            ${breaks.length ? `<div class="flex flex-wrap gap-1 items-center">
+                <span class="text-xs text-gray-400">ช่วงพัก:</span>${breakBadgesHtml}
             </div>` : ''}
         `;
         wrapper.appendChild(badge);
@@ -1595,6 +1636,7 @@ class DashboardUI {
         chart._isDrilling = false;
         chart._samplingSlots = [];
         chart._isNightShift = false;
+        chart._shiftBreaks = [];
         chart.update();
         document.getElementById(`chart-wrapper-${key}`)?.querySelector('.drilldown-badge')?.remove();
     }
@@ -1607,17 +1649,15 @@ class DashboardUI {
             return { labels: ['(ว่าง)', '(รอข้อมูล)'], values: [null, null] };
         }
 
-        // ตรวจสอบว่าข้ามวันหรือไม่
-        const dates = records.map(r => StatUtils.parseThaiDate(r.timestamp));
-        const isoSet = new Set(dates.map(d => d ? StatUtils.dateToISO(d) : '?'));
+        // ตรวจสอบว่าข้ามวันผลิต (08:00-07:59) หรือไม่
+        const isoSet = new Set(records.map(r => StatUtils.prodDateISO(r.timestamp)));
         const spansMultipleDays = isoSet.size > 1;
 
         if (spansMultipleDays) {
-            // กลุ่มรายวัน: คำนวณค่าเฉลี่ยต่อวัน
+            // กลุ่มรายวันผลิต: คำนวณค่าเฉลี่ยต่อวัน
             const grouped = {};
             records.forEach(r => {
-                const d = StatUtils.parseThaiDate(r.timestamp);
-                const key = d ? StatUtils.dateToISO(d) : '?';
+                const key = StatUtils.prodDateISO(r.timestamp);
                 if (!grouped[key]) grouped[key] = [];
                 const v = parseFloat(r.value);
                 if (!isNaN(v)) grouped[key].push(v);
