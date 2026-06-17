@@ -6,7 +6,7 @@
 const Config = {
   // ชื่อแท็บที่จะใช้บันทึกข้อมูลการวัด (ปรับตามชื่อแท็บใน Google Sheet ของคุณ)
   SHEET_NAME: "Coil winding output",
-  HEADERS: ["Timestamp", "Machine_ID", "Part_ID", "Parameter", "Operator", "Measured_Value"],
+  HEADERS: ["Timestamp", "Machine_ID", "Part_ID", "Parameter", "Operator", "Measured_Value", "Setup_Type"],
   HEADER_COLOR: "#d0e0e3",
 
   // ID ของ Google Sheet ไฟล์ Master (ที่มีแท็บ Config)
@@ -132,7 +132,8 @@ class SheetRepository {
       data.part,
       data.parameter,
       data.operator,
-      data.value
+      data.value,
+      data.setupType || ""
     ]);
   }
 
@@ -150,7 +151,8 @@ class SheetRepository {
       part: row[2],
       parameter: row[3],
       operator: row[4],
-      value: row[5]
+      value: row[5],
+      setupType: row[6] || ""
     }));
   }
 }
