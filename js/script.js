@@ -447,6 +447,12 @@ const sigmaZonePlugin = {
 // 4. VIEW (UI Management)
 // -----------------------------------------------------
 class DashboardUI {
+    static _setupTypeColor(type) {
+        if (type === 'roll_change') return 'rgb(234, 88, 12)';
+        if (type === 'out_of_spec') return 'rgb(147, 51, 234)';
+        return 'rgb(59, 130, 246)';
+    }
+
     constructor() {
         this.chartInstances = {};
         this.bellChartInstance = null;
@@ -1489,12 +1495,15 @@ class DashboardUI {
                 }
             } else {
                 // Numeric: smart daily-vs-individual aggregation
-                const { labels, values } = DashboardUI._buildNumericChartData(paramRecords);
+                const { labels, values, setupTypes } = DashboardUI._buildNumericChartData(paramRecords);
                 const uslData = Array(labels.length).fill(spec.usl);
                 const lslData = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
 
                 chart.data.labels = labels;
                 chart.data.datasets[0].data = values;
+                chart.data.datasets[0].pointBackgroundColor = setupTypes.map(t => DashboardUI._setupTypeColor(t));
+                chart.data.datasets[0].pointBorderColor = setupTypes.map(t => DashboardUI._setupTypeColor(t));
+                chart.data.datasets[0].pointRadius = setupTypes.map(t => t ? 5 : 3);
                 chart.data.datasets[1].data = uslData;
                 chart.data.datasets[2].data = lslData;
 
@@ -1546,8 +1555,10 @@ class DashboardUI {
             return (parts[1] || '').substring(0, 5);
         });
         const rawValues = dayRecords.map(r => parseFloat(r.value));
+        const rawSetupTypes = dayRecords.map(r => r.setupType || '');
         const labels = rawLabels.length === 1 ? ['', ...rawLabels] : rawLabels;
         const values = rawValues.length === 1 ? [null, ...rawValues] : rawValues;
+        const setupTypes = rawSetupTypes.length === 1 ? ['', ...rawSetupTypes] : rawSetupTypes;
 
         // หา shift และ slots สำหรับวันที่คลิก
         const shift = this._getShift(rawLabels.find(t => /^\d{2}:\d{2}$/.test(t)));
@@ -1560,6 +1571,9 @@ class DashboardUI {
         const spec = chart._spec;
         chart.data.labels = labels;
         chart.data.datasets[0].data = values;
+        chart.data.datasets[0].pointBackgroundColor = setupTypes.map(t => DashboardUI._setupTypeColor(t));
+        chart.data.datasets[0].pointBorderColor = setupTypes.map(t => DashboardUI._setupTypeColor(t));
+        chart.data.datasets[0].pointRadius = setupTypes.map(t => t ? 5 : 3);
         chart.data.datasets[1].data = Array(labels.length).fill(spec.usl);
         chart.data.datasets[2].data = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
         chart.options.scales.x.ticks.maxRotation = 0;
@@ -1626,10 +1640,13 @@ class DashboardUI {
     _resetChartDrillDown(key) {
         const chart = this.chartInstances[key];
         if (!chart) return;
-        const { labels, values } = DashboardUI._buildNumericChartData(chart._allRecords || []);
+        const { labels, values, setupTypes } = DashboardUI._buildNumericChartData(chart._allRecords || []);
         const spec = chart._spec;
         chart.data.labels = labels;
         chart.data.datasets[0].data = values;
+        chart.data.datasets[0].pointBackgroundColor = setupTypes.map(t => DashboardUI._setupTypeColor(t));
+        chart.data.datasets[0].pointBorderColor = setupTypes.map(t => DashboardUI._setupTypeColor(t));
+        chart.data.datasets[0].pointRadius = setupTypes.map(t => t ? 5 : 3);
         chart.data.datasets[1].data = Array(labels.length).fill(spec.usl);
         chart.data.datasets[2].data = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
         chart.options.scales.x.ticks.maxRotation = 45;
@@ -1653,14 +1670,23 @@ class DashboardUI {
         const isoSet = new Set(records.map(r => StatUtils.prodDateISO(r.timestamp)));
         const spansMultipleDays = isoSet.size > 1;
 
+        const _prioritySetupType = (types) => {
+            if (types.includes('out_of_spec')) return 'out_of_spec';
+            if (types.includes('roll_change')) return 'roll_change';
+            return '';
+        };
+
         if (spansMultipleDays) {
             // กลุ่มรายวันผลิต: คำนวณค่าเฉลี่ยต่อวัน
             const grouped = {};
             records.forEach(r => {
                 const key = StatUtils.prodDateISO(r.timestamp);
-                if (!grouped[key]) grouped[key] = [];
+                if (!grouped[key]) grouped[key] = { values: [], setupTypes: [] };
                 const v = parseFloat(r.value);
-                if (!isNaN(v)) grouped[key].push(v);
+                if (!isNaN(v)) {
+                    grouped[key].values.push(v);
+                    grouped[key].setupTypes.push(r.setupType || '');
+                }
             });
 
             const sortedDays = Object.keys(grouped).filter(k => k !== '?').sort();
@@ -1669,14 +1695,15 @@ class DashboardUI {
                 return `${parseInt(d)}/${parseInt(m)}`;
             });
             const values = sortedDays.map(day => {
-                const arr = grouped[day];
+                const arr = grouped[day].values;
                 return arr.length > 0 ? parseFloat(StatUtils.mean(arr).toFixed(3)) : null;
             });
+            const setupTypes = sortedDays.map(day => _prioritySetupType(grouped[day].setupTypes));
 
             if (values.length === 1) {
-                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values] };
+                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values], setupTypes: ['', ...setupTypes] };
             }
-            return { labels, values };
+            return { labels, values, setupTypes };
         } else {
             // รายครั้ง: แสดง HH:MM พร้อมข้อมูลล่าสุด 30 จุด
             const displayRecords = records.slice(-30);
@@ -1685,11 +1712,12 @@ class DashboardUI {
                 return timePart.substring(0, 5); // HH:MM
             });
             const values = displayRecords.map(r => parseFloat(r.value));
+            const setupTypes = displayRecords.map(r => r.setupType || '');
 
             if (displayRecords.length === 1) {
-                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values] };
+                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values], setupTypes: ['', ...setupTypes] };
             }
-            return { labels, values };
+            return { labels, values, setupTypes };
         }
     }
 
@@ -1970,6 +1998,23 @@ class AppController {
             }
         });
 
+        // Setup type buttons
+        document.querySelectorAll('.setup-type-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const type = btn.dataset.setupType;
+                document.getElementById('setup-type-value').value = type;
+                document.querySelectorAll('.setup-type-btn').forEach(b => {
+                    const t = b.dataset.setupType;
+                    if (t === '') b.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-colors';
+                    else if (t === 'roll_change') b.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-gray-300 text-gray-500 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition-colors';
+                    else b.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-gray-300 text-gray-500 hover:border-purple-500 hover:text-purple-600 hover:bg-purple-50 transition-colors';
+                });
+                if (type === '') btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-blue-500 bg-blue-50 text-blue-700 transition-colors';
+                else if (type === 'roll_change') btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-orange-500 bg-orange-50 text-orange-700 transition-colors';
+                else btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-purple-500 bg-purple-50 text-purple-700 transition-colors';
+            });
+        });
+
         // Date range filter — preset buttons ค้นหาทันที
         document.querySelectorAll('.date-preset-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -2072,6 +2117,16 @@ class AppController {
         this.refreshDashboard(true, true);
     }
 
+    _resetSetupType() {
+        document.getElementById('setup-type-value').value = '';
+        document.querySelectorAll('.setup-type-btn').forEach(btn => {
+            const t = btn.dataset.setupType;
+            if (t === '') btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-blue-500 bg-blue-50 text-blue-700 transition-colors';
+            else if (t === 'roll_change') btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-gray-300 text-gray-500 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition-colors';
+            else btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-gray-300 text-gray-500 hover:border-purple-500 hover:text-purple-600 hover:bg-purple-50 transition-colors';
+        });
+    }
+
     async handleSubmit(e) {
         e.preventDefault();
 
@@ -2091,7 +2146,8 @@ class AppController {
                 machine: document.getElementById('machine-id').value,
                 part,
                 parameter: param,
-                operator: document.getElementById('operator').value
+                operator: document.getElementById('operator').value,
+                setupType: document.getElementById('setup-type-value').value
             };
 
             this.ui.setLoadingState(true);
@@ -2101,6 +2157,7 @@ class AppController {
             this.ui.setLoadingState(false);
 
             this.ui.resetGaugeSelection();
+            this._resetSetupType();
             this.refreshDashboard(true, true);
             return;
         }
@@ -2117,7 +2174,8 @@ class AppController {
             machine: document.getElementById('machine-id').value,
             part,
             parameter: param,
-            operator: document.getElementById('operator').value
+            operator: document.getElementById('operator').value,
+            setupType: document.getElementById('setup-type-value').value
         };
 
         const specName = this.currentConfig.name?.split(':')[0] || param;
@@ -2128,6 +2186,7 @@ class AppController {
             }
             this.ui.setLoadingState(false);
             this.ui.clearInput();
+            this._resetSetupType();
             this.refreshDashboard(true, true);
         });
         return;

@@ -103,6 +103,17 @@
 
                 <p id="spec-display" class="text-xs text-blue-600 font-semibold mt-1 bg-blue-50 p-2 rounded border border-blue-100"></p>
 
+                <!-- Setup type selector -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1">ประเภทการบันทึก</label>
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <button type="button" data-setup-type="" class="setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-blue-500 bg-blue-50 text-blue-700 transition-colors">ปกติ</button>
+                        <button type="button" data-setup-type="roll_change" class="setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-gray-300 text-gray-500 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition-colors">เปลี่ยนม้วน</button>
+                        <button type="button" data-setup-type="out_of_spec" class="setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-gray-300 text-gray-500 hover:border-purple-500 hover:text-purple-600 hover:bg-purple-50 transition-colors">เอาท์สเปค</button>
+                    </div>
+                    <input type="hidden" id="setup-type-value" value="">
+                </div>
+
                 <div>
                     <label class="block text-sm font-medium text-gray-600 mb-1">พนักงาน (Operator)</label>
                     <select id="operator" required class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
@@ -136,6 +147,14 @@
             <div class="flex items-center justify-between border-b pb-2">
                 <h2 class="text-xl font-bold text-gray-800">ภาพรวมคุณภาพ (Quality Overview)</h2>
                 <span id="overview-part-title" class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold"></span>
+            </div>
+
+            <!-- Point color legend -->
+            <div class="flex items-center gap-3 text-xs text-gray-500 bg-white px-3 py-2 rounded-lg border flex-wrap">
+                <span class="font-medium text-gray-600 shrink-0">สัญลักษณ์จุด:</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500"></span>ปกติ</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-orange-500"></span>หลังเปลี่ยนม้วน</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-purple-600"></span>หลังตั้งเครื่อง(เอาท์สเปค)</span>
             </div>
 
             <!-- Date Range Filter -->
