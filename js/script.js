@@ -174,18 +174,22 @@ class StatUtils {
     }
 
     // แปลง timestamp จาก toLocaleString('th-TH') → Date object (รวมเวลา)
+    // รองรับทั้ง 24h ("17/6/2569 17:30:00") และ 12h ("17/6/2569, 5:30:00 PM")
     static parseThaiDateTime(timestamp) {
         if (!timestamp) return null;
         try {
             const clean = String(timestamp).replace(',', '').trim();
-            const parts = clean.split(' ');
+            const parts = clean.split(/\s+/);
             const datePart = parts[0];
             const timePart = parts[1] || '0:0:0';
+            const ampm = (parts[2] || '').toLowerCase();
             const dp = datePart.split('/');
             if (dp.length !== 3) return null;
             let [d, m, y] = dp.map(Number);
             if (y > 2500) y -= 543;
-            const [h, min, s] = timePart.split(':').map(v => Number(v) || 0);
+            let [h, min, s] = timePart.split(':').map(v => Number(v) || 0);
+            if (ampm === 'pm' && h < 12) h += 12;
+            if (ampm === 'am' && h === 12) h = 0;
             const result = new Date(y, m - 1, d, h, min, s);
             return isNaN(result.getTime()) ? null : result;
         } catch { return null; }
@@ -266,7 +270,7 @@ class StatUtils {
 class InMemoryService {
     constructor() { this.data = []; }
     async save(record) {
-        record.timestamp = new Date().toLocaleString('th-TH');
+        record.timestamp = new Date().toLocaleString('th-TH', { hour12: false });
         this.data.push(record);
         return { success: true };
     }
@@ -295,7 +299,7 @@ class GoogleSheetService {
     }
 
     async save(record) {
-        record.timestamp = new Date().toLocaleString('th-TH');
+        record.timestamp = new Date().toLocaleString('th-TH', { hour12: false });
         this.pendingQueue.push(record);
         this.cachedData.push(record);
         this._saveQueueToLocal();
