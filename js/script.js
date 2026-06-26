@@ -726,11 +726,13 @@ class DashboardUI {
     validateAndWarn(values, currentParam, currentSpec, partSpecs, specName, onConfirm) {
         const warnings = [];
         const seen = new Set();
+        let hasOutOfSpec = false;
         for (const v of values) {
             const num = parseFloat(v);
             if (isNaN(num)) continue;
             const outOfSpec = this._checkOutOfSpec(num, currentSpec);
             if (outOfSpec && !seen.has(`s${num}`)) {
+                hasOutOfSpec = true;
                 seen.add(`s${num}`);
                 warnings.push(`ค่า <b>${num}</b> ${outOfSpec} ของ <b>${specName}</b> กรุณายืนยันก่อนบันทึก`);
             }
@@ -746,7 +748,10 @@ class DashboardUI {
             }
         }
         if (warnings.length === 0) { onConfirm(); return; }
-        this._showWarningModal(warnings, specName, onConfirm);
+        const confirmAction = hasOutOfSpec
+            ? () => this._showOutOfSpecSecondConfirm(specName, onConfirm)
+            : onConfirm;
+        this._showWarningModal(warnings, specName, confirmAction);
     }
 
     _showWarningModal(warnings, specName, onConfirm) {
@@ -778,6 +783,37 @@ class DashboardUI {
                 <div class="grid grid-cols-2 gap-2 px-5 pb-4">
                     <button id="val-modal-cancel" class="py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">← กลับไปแก้ไข</button>
                     <button id="val-modal-confirm" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-colors">ยืนยันส่งข้อมูล →</button>
+                </div>
+            </div>
+        `;
+        document.getElementById('val-modal-cancel').onclick = () => modal.remove();
+        document.getElementById('val-modal-confirm').onclick = () => { modal.remove(); onConfirm(); };
+    }
+
+    _showOutOfSpecSecondConfirm(specName, onConfirm) {
+        let modal = document.getElementById('validation-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'validation-modal';
+            document.body.appendChild(modal);
+        }
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div class="bg-red-50 border-b border-red-200 px-5 py-3 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    <h3 class="text-sm font-bold text-red-800">ยืนยันซ้ำ: ค่านอกสเปค</h3>
+                </div>
+                <div class="px-5 py-4">
+                    <p class="text-sm text-gray-700 leading-relaxed">
+                        ค่าที่กรอกของ <b>${specName}</b> อยู่นอกช่วง STD จริง ต้องการบันทึกข้อมูลนี้แน่นอนหรือไม่?
+                    </p>
+                </div>
+                <div class="grid grid-cols-2 gap-2 px-5 pb-4">
+                    <button id="val-modal-cancel" class="py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">← กลับไปแก้ไข</button>
+                    <button id="val-modal-confirm" class="py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold transition-colors">ยืนยันอีกครั้ง</button>
                 </div>
             </div>
         `;
