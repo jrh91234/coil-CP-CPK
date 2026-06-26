@@ -137,6 +137,15 @@ class SheetRepository {
     ]);
   }
 
+  deleteRecord(rowNumber) {
+    const sheet = this._getSheet();
+    const row = Number(rowNumber);
+    if (!row || row <= 1 || row > sheet.getLastRow()) {
+      throw new Error("Invalid record row.");
+    }
+    sheet.deleteRow(row);
+  }
+
   getAllRecords() {
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
@@ -145,7 +154,8 @@ class SheetRepository {
     
     const rawData = values.slice(1);
     
-    return rawData.map(row => ({
+    return rawData.map((row, index) => ({
+      rowNumber: index + 2,
       timestamp: ResponseHelper.formatDate(new Date(row[0])),
       machine: row[1],
       part: row[2],
@@ -172,6 +182,12 @@ function doPost(e) {
       const repo = new SheetRepository();
       repo.addRecord(postData.data);
       return ResponseHelper.success(null, "Data saved successfully");
+    }
+
+    if (postData.action === "delete_record") {
+      const repo = new SheetRepository();
+      repo.deleteRecord(postData.rowNumber);
+      return ResponseHelper.success(null, "Record deleted");
     }
 
     if (postData.action === "upload_image") {
