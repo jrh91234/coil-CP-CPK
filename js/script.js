@@ -359,9 +359,9 @@ class GoogleSheetService {
         return !!result.data?.ok;
     }
 
-    async getAll() {
+    async getAll(options = {}) {
         try {
-            const response = await fetch(`${this.url}?action=get`);
+            const response = await fetch(`${this.url}?action=get`, { signal: options.signal });
             const result = await response.json();
             const serverData = result.data || [];
 
@@ -382,6 +382,7 @@ class GoogleSheetService {
             this.syncBackground();
             return this.cachedData;
         } catch (error) {
+            if (error.name === 'AbortError') throw error;
             console.error("Error fetching from Google Sheets:", error);
             return this.cachedData.length > 0 ? this.cachedData : this.pendingQueue;
         }
@@ -1995,6 +1996,7 @@ class AppController {
         this.activeDatePreset = -1; // -1 = ทั้งหมด
         this.allRecords = [];
         this.refreshSeq = 0;
+        this.refreshAbortController = null;
     }
 
     _escapeHtml(value) {
@@ -2694,6 +2696,11 @@ class AppController {
 
     async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
         const refreshId = ++this.refreshSeq;
+        if (this.refreshAbortController) {
+            this.refreshAbortController.abort();
+        }
+        this.refreshAbortController = new AbortController();
+        const signal = this.refreshAbortController.signal;
         const t0 = performance.now();
         this._setSearchLoading(true);
 
@@ -2708,8 +2715,9 @@ class AppController {
         if (useLocalCache && this.db.getLocalData) {
             allRecords = this.db.getLocalData();
         } else {
-            allRecords = await this.db.getAll();
+            allRecords = await this.db.getAll({ signal });
         }
+        if (refreshId !== this.refreshSeq || signal.aborted) return;
         this.allRecords = allRecords || [];
 
         const machine = this.ui.elements.machineSelect.value;
@@ -2738,10 +2746,14 @@ class AppController {
         this.ui.renderBellCurve(filteredRecords, this.currentConfig, part);
 
         } catch (err) {
+            if (err.name === 'AbortError') return;
             console.error('refreshDashboard error:', err);
         } finally {
             clearInterval(ticker);
             if (refreshId !== this.refreshSeq) return;
+            if (this.refreshAbortController?.signal === signal) {
+                this.refreshAbortController = null;
+            }
             const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
             const loadText = document.getElementById('dashboard-loading-text');
             if (loadText) loadText.innerText = `ค้นหาเสร็จแล้ว`;
