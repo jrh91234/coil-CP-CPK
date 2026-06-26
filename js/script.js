@@ -2360,11 +2360,7 @@ class AppController {
         const modal = document.getElementById('settings-modal');
         if (!modal) return;
 
-        const machine = this.ui.elements.machineSelect.value;
-        const currentPart = this.ui.elements.partSelect.value;
         const records = (this.allRecords || [])
-            .filter(r => !machine || r.machine === machine)
-            .filter(r => !currentPart || r.part === currentPart)
             .map(r => ({ ...r, suspiciousReason: this._getSuspiciousReason(r) }))
             .filter(r => r.suspiciousReason)
             .reverse();
@@ -2375,7 +2371,7 @@ class AppController {
                 <div class="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center justify-between">
                     <div>
                         <h3 class="text-sm font-bold text-blue-900">จัดการข้อมูลที่น่าสงสัย</h3>
-                        <p id="settings-record-count" class="text-xs text-blue-700">โหลดครั้งละ 50 รายการเมื่อเลื่อนลง</p>
+                        <p id="settings-record-count" class="text-xs text-blue-700">แสดงข้อมูลน่าสงสัยทั้งหมด โหลดครั้งละ 50 รายการเมื่อเลื่อนลง</p>
                     </div>
                     <button id="settings-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none" type="button">&times;</button>
                 </div>
