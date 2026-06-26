@@ -712,12 +712,28 @@ class DashboardUI {
         return null;
     }
 
+    _checkOutOfSpec(value, spec) {
+        if (!spec || spec.type === 'gauge') return null;
+        if (spec.lsl !== null && value < spec.lsl) {
+            return `ต่ำกว่า LSL ${spec.lsl}`;
+        }
+        if (spec.usl !== null && value > spec.usl) {
+            return `สูงกว่า USL ${spec.usl}`;
+        }
+        return null;
+    }
+
     validateAndWarn(values, currentParam, currentSpec, partSpecs, specName, onConfirm) {
         const warnings = [];
         const seen = new Set();
         for (const v of values) {
             const num = parseFloat(v);
             if (isNaN(num)) continue;
+            const outOfSpec = this._checkOutOfSpec(num, currentSpec);
+            if (outOfSpec && !seen.has(`s${num}`)) {
+                seen.add(`s${num}`);
+                warnings.push(`ค่า <b>${num}</b> ${outOfSpec} ของ <b>${specName}</b> กรุณายืนยันก่อนบันทึก`);
+            }
             const suggestion = this._checkDecimalTypo(num, currentSpec);
             if (suggestion !== null && !seen.has(`d${num}`)) {
                 seen.add(`d${num}`);
