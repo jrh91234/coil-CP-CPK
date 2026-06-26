@@ -1994,6 +1994,7 @@ class AppController {
         this.machineAssignments = {};
         this.activeDatePreset = -1; // -1 = ทั้งหมด
         this.allRecords = [];
+        this.refreshSeq = 0;
     }
 
     _escapeHtml(value) {
@@ -2672,10 +2673,14 @@ class AppController {
         const spin  = document.getElementById('date-search-spinner');
         const label = document.getElementById('date-search-label');
         const btn   = document.getElementById('date-search-btn');
+        const loadText = document.getElementById('dashboard-loading-text');
+        const elapsedEl = document.getElementById('dashboard-loading-elapsed');
         if (isLoading) {
             bar?.classList.remove('hidden');
             icon?.classList.add('hidden');
             spin?.classList.remove('hidden');
+            if (loadText) loadText.innerText = 'กำลังค้นหาข้อมูล...';
+            if (elapsedEl) elapsedEl.innerText = '';
             if (label) label.innerText = 'กำลังค้นหา...';
             if (btn)   btn.disabled = true;
         } else {
@@ -2688,6 +2693,7 @@ class AppController {
     }
 
     async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
+        const refreshId = ++this.refreshSeq;
         const t0 = performance.now();
         this._setSearchLoading(true);
 
@@ -2721,10 +2727,6 @@ class AppController {
         if (!param) {
             // ซ่อน image panel เมื่อยังไม่ได้เลือก parameter
             this.ui.clearImagePanel();
-            clearInterval(ticker);
-            const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
-            if (elapsedEl) elapsedEl.innerText = `✓ ${elapsed} วิ`;
-            setTimeout(() => this._setSearchLoading(false), 600);
             return;
         }
 
@@ -2739,11 +2741,14 @@ class AppController {
             console.error('refreshDashboard error:', err);
         } finally {
             clearInterval(ticker);
+            if (refreshId !== this.refreshSeq) return;
             const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
             const loadText = document.getElementById('dashboard-loading-text');
             if (loadText) loadText.innerText = `ค้นหาเสร็จแล้ว`;
             if (elapsedEl) elapsedEl.innerText = `✓ ${elapsed} วิ`;
-            setTimeout(() => this._setSearchLoading(false), 800);
+            setTimeout(() => {
+                if (refreshId === this.refreshSeq) this._setSearchLoading(false);
+            }, 800);
         }
     }
 }
