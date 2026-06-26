@@ -268,10 +268,18 @@ class StatUtils {
 // 3. DATA SERVICES (API Layer & Background Sync)
 // -----------------------------------------------------
 class InMemoryService {
-    constructor() { this.data = []; }
+    constructor() {
+        this.data = [];
+        this.nextRowNumber = 2;
+    }
     async save(record) {
         record.timestamp = new Date().toLocaleString('th-TH', { hour12: false });
+        record.rowNumber = this.nextRowNumber++;
         this.data.push(record);
+        return { success: true };
+    }
+    async deleteRecord(rowNumber) {
+        this.data = this.data.filter(r => String(r.rowNumber) !== String(rowNumber));
         return { success: true };
     }
     async getAll() { return this.data; }
@@ -305,6 +313,19 @@ class GoogleSheetService {
         this._saveQueueToLocal();
         this.syncBackground();
         return { success: true };
+    }
+
+    async deleteRecord(rowNumber) {
+        if (!rowNumber) throw new Error('ไม่มี rowNumber สำหรับลบข้อมูลนี้');
+        const response = await fetch(this.url, {
+            method: 'POST',
+            body: JSON.stringify({ action: "delete_record", rowNumber }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+        });
+        const result = await response.json();
+        if (!result.success) throw new Error(result.error || 'Delete failed');
+        this.cachedData = this.cachedData.filter(r => String(r.rowNumber) !== String(rowNumber));
+        return result;
     }
 
     async getAll() {
@@ -1941,6 +1962,17 @@ class AppController {
         this.currentConfig = { target: 0, usl: 0, lsl: 0, name: '' };
         this.machineAssignments = {};
         this.activeDatePreset = -1; // -1 = ทั้งหมด
+        this.allRecords = [];
+    }
+
+    _escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[ch]));
     }
 
     _resetSetupType() {
@@ -2066,6 +2098,7 @@ class AppController {
         this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
         document.getElementById('add-value-btn').addEventListener('click', () => this.addMeasuredValueRow());
+        document.getElementById('settings-btn')?.addEventListener('click', () => this.openSettingsGate());
 
         // Gauge buttons — event delegation ต่อแถว
         const gaugeBase = 'flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm transition-colors';
@@ -2155,6 +2188,146 @@ class AppController {
                     btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-orange-400 bg-orange-50 text-orange-600 transition-colors';
                 } else if (type === 'out_of_spec') {
                     btn.className = 'setup-type-btn py-2 px-2 rounded-lg border-2 font-bold text-xs border-purple-500 bg-purple-50 text-purple-600 transition-colors';
+                }
+            });
+        });
+    }
+
+    openSettingsGate() {
+        let modal = document.getElementById('settings-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'settings-modal';
+            document.body.appendChild(modal);
+        }
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div class="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center justify-between">
+                    <h3 class="text-sm font-bold text-blue-900">ตั้งค่า / จัดการข้อมูล</h3>
+                    <button id="settings-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none" type="button">&times;</button>
+                </div>
+                <form id="settings-password-form" class="px-5 py-4 space-y-3">
+                    <label class="block text-sm font-medium text-gray-700">กรอกรหัสเพื่อเข้าเมนูจัดการข้อมูล</label>
+                    <input id="settings-password" type="password" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" autocomplete="current-password">
+                    <p id="settings-error" class="hidden text-xs text-red-600">รหัสไม่ถูกต้อง</p>
+                    <div class="grid grid-cols-2 gap-2 pt-1">
+                        <button type="button" id="settings-cancel" class="py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">ยกเลิก</button>
+                        <button type="submit" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold">เข้าสู่เมนู</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        const close = () => modal.remove();
+        document.getElementById('settings-close').onclick = close;
+        document.getElementById('settings-cancel').onclick = close;
+        document.getElementById('settings-password')?.focus();
+        document.getElementById('settings-password-form').onsubmit = (e) => {
+            e.preventDefault();
+            const pass = document.getElementById('settings-password').value;
+            if (pass !== 'Cpk/cp') {
+                document.getElementById('settings-error').classList.remove('hidden');
+                return;
+            }
+            this.showSuspiciousDataManager();
+        };
+    }
+
+    _getSuspiciousReason(record) {
+        const spec = PART_SPECS[record.part]?.[record.parameter];
+        if (!spec) return 'ไม่พบสเปคของ item นี้';
+
+        if (spec.type === 'gauge') {
+            return String(record.value).toUpperCase() === 'FAIL' ? 'ผล Gauge ไม่ผ่าน' : null;
+        }
+
+        const value = parseFloat(record.value);
+        if (isNaN(value)) return 'ค่าไม่ใช่ตัวเลข';
+        if (spec.lsl !== null && value < spec.lsl) return `ต่ำกว่า LSL ${spec.lsl}`;
+        if (spec.usl !== null && value > spec.usl) return `สูงกว่า USL ${spec.usl}`;
+        return null;
+    }
+
+    showSuspiciousDataManager() {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+
+        const machine = this.ui.elements.machineSelect.value;
+        const currentPart = this.ui.elements.partSelect.value;
+        const records = (this.allRecords || [])
+            .filter(r => !machine || r.machine === machine)
+            .filter(r => !currentPart || r.part === currentPart)
+            .map(r => ({ ...r, suspiciousReason: this._getSuspiciousReason(r) }))
+            .filter(r => r.suspiciousReason)
+            .reverse()
+            .slice(0, 100);
+
+        const rows = records.map(r => {
+            const canDelete = !!r.rowNumber;
+            const valueClass = String(r.suspiciousReason).includes('LSL') || String(r.suspiciousReason).includes('USL') || String(r.suspiciousReason).includes('ไม่ผ่าน')
+                ? 'text-red-700 bg-red-50'
+                : 'text-yellow-700 bg-yellow-50';
+            return `
+                <tr class="border-b align-top">
+                    <td class="px-3 py-2 whitespace-nowrap">${this._escapeHtml(String(r.timestamp).replace(',', ''))}</td>
+                    <td class="px-3 py-2">${this._escapeHtml(r.part)}<br><span class="text-gray-400">${this._escapeHtml(r.parameter)}</span></td>
+                    <td class="px-3 py-2">${this._escapeHtml(r.operator)}</td>
+                    <td class="px-3 py-2 text-right font-bold">${this._escapeHtml(r.value)}</td>
+                    <td class="px-3 py-2"><span class="${valueClass} px-2 py-1 rounded text-xs font-medium">${this._escapeHtml(r.suspiciousReason)}</span></td>
+                    <td class="px-3 py-2 text-right">
+                        <button type="button" data-delete-row="${this._escapeHtml(r.rowNumber)}" ${canDelete ? '' : 'disabled'} class="delete-suspicious-btn px-2 py-1 text-xs rounded ${canDelete ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}">ลบ</button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+                <div class="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-bold text-blue-900">จัดการข้อมูลที่น่าสงสัย</h3>
+                        <p class="text-xs text-blue-700">แสดงข้อมูลของเครื่อง/รุ่นที่เลือกอยู่ สูงสุด 100 รายการล่าสุด</p>
+                    </div>
+                    <button id="settings-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none" type="button">&times;</button>
+                </div>
+                <div class="overflow-auto">
+                    <table class="min-w-full text-xs text-left text-gray-600">
+                        <thead class="sticky top-0 bg-gray-50 text-gray-700 border-b">
+                            <tr>
+                                <th class="px-3 py-2">เวลา</th>
+                                <th class="px-3 py-2">รุ่น / Item</th>
+                                <th class="px-3 py-2">พนักงาน</th>
+                                <th class="px-3 py-2 text-right">ค่า</th>
+                                <th class="px-3 py-2">เหตุผล</th>
+                                <th class="px-3 py-2 text-right">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows || '<tr><td colspan="6" class="px-3 py-8 text-center text-gray-400">ไม่พบข้อมูลที่น่าสงสัยในชุดข้อมูลปัจจุบัน</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="px-5 py-3 border-t bg-gray-50 text-xs text-gray-500">
+                    ข้อมูลที่ลบจะถูกลบออกจาก Google Sheet โดยตรง โปรดตรวจสอบก่อนลบ
+                </div>
+            </div>
+        `;
+        document.getElementById('settings-close').onclick = () => modal.remove();
+        modal.querySelectorAll('.delete-suspicious-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const rowNumber = btn.dataset.deleteRow;
+                if (!rowNumber || !confirm(`ยืนยันลบข้อมูลแถวที่ ${rowNumber} หรือไม่?`)) return;
+                btn.disabled = true;
+                btn.textContent = 'กำลังลบ...';
+                try {
+                    await this.db.deleteRecord(rowNumber);
+                    await this.refreshDashboard(false, false);
+                    this.showSuspiciousDataManager();
+                } catch (err) {
+                    alert('ลบข้อมูลไม่สำเร็จ: ' + err.message);
+                    btn.disabled = false;
+                    btn.textContent = 'ลบ';
                 }
             });
         });
@@ -2343,6 +2516,7 @@ class AppController {
         } else {
             allRecords = await this.db.getAll();
         }
+        this.allRecords = allRecords || [];
 
         const machine = this.ui.elements.machineSelect.value;
         const part = this.ui.elements.partSelect.value;
