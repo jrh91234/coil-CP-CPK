@@ -2397,13 +2397,25 @@ class AppController {
                 </div>
             </div>
         `;
-        document.getElementById('settings-close').onclick = () => modal.remove();
+        let managerDirty = false;
+        document.getElementById('settings-close').onclick = () => {
+            modal.remove();
+            if (managerDirty) this.refreshDashboard(false, false);
+        };
 
         const tbody = document.getElementById('settings-record-rows');
         const scroller = document.getElementById('settings-table-scroll');
         const countEl = document.getElementById('settings-record-count');
         const pageSize = 50;
         let rendered = 0;
+
+        const updateCount = () => {
+            if (!countEl) return;
+            const visible = tbody?.querySelectorAll('tr[data-row-number]').length || 0;
+            countEl.textContent = records.length === 0
+                ? 'ไม่พบข้อมูลที่น่าสงสัยในชุดข้อมูลปัจจุบัน'
+                : `แสดง ${visible} จาก ${records.length} รายการ โหลดเพิ่มครั้งละ 50 เมื่อเลื่อนลง`;
+        };
 
         const bindRows = (scope) => {
             scope.querySelectorAll('select[data-field="part"]').forEach(select => {
@@ -2426,8 +2438,16 @@ class AppController {
                         btn.textContent = 'กำลังลบ...';
                         try {
                             await this.db.deleteRecord(rowNumber);
-                            await this.refreshDashboard(false, false);
-                            this.showSuspiciousDataManager();
+                            this.allRecords = (this.allRecords || []).filter(r => String(r.rowNumber) !== String(rowNumber));
+                            const idx = records.findIndex(r => String(r.rowNumber) === String(rowNumber));
+                            if (idx >= 0) records.splice(idx, 1);
+                            tr.remove();
+                            rendered = Math.max(0, rendered - 1);
+                            managerDirty = true;
+                            if (records.length === 0) {
+                                tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-8 text-center text-gray-400">ไม่พบข้อมูลที่น่าสงสัยในชุดข้อมูลปัจจุบัน</td></tr>';
+                            }
+                            updateCount();
                         } catch (err) {
                             alert('ลบข้อมูลไม่สำเร็จ: ' + err.message);
                             btn.disabled = false;
@@ -2436,13 +2456,14 @@ class AppController {
                         return;
                     }
 
+                    const currentRecord = records.find(r => String(r.rowNumber) === String(rowNumber));
                     const updated = {
                         machine: tr.querySelector('[data-field="machine"]').value,
                         part: tr.querySelector('[data-field="part"]').value,
                         parameter: tr.querySelector('[data-field="parameter"]').value,
-                        operator: records.find(r => String(r.rowNumber) === String(rowNumber))?.operator || '',
+                        operator: currentRecord?.operator || '',
                         value: tr.querySelector('[data-field="value"]').value,
-                        setupType: records.find(r => String(r.rowNumber) === String(rowNumber))?.setupType || ''
+                        setupType: currentRecord?.setupType || ''
                     };
 
                     if (!updated.machine || !updated.part || !updated.parameter || updated.value === '') {
@@ -2454,8 +2475,18 @@ class AppController {
                     btn.textContent = 'กำลังบันทึก...';
                     try {
                         await this.db.updateRecord(rowNumber, updated);
-                        await this.refreshDashboard(false, false);
-                        this.showSuspiciousDataManager();
+                        const nextRecord = { ...(currentRecord || {}), ...updated, rowNumber };
+                        if (currentRecord) Object.assign(currentRecord, nextRecord);
+                        const allRecord = (this.allRecords || []).find(r => String(r.rowNumber) === String(rowNumber));
+                        if (allRecord) Object.assign(allRecord, nextRecord);
+
+                        const temp = document.createElement('tbody');
+                        temp.innerHTML = this._renderSuspiciousRow(nextRecord);
+                        const replacement = temp.firstElementChild;
+                        tr.replaceWith(replacement);
+                        bindRows(replacement);
+                        managerDirty = true;
+                        updateCount();
                     } catch (err) {
                         alert('แก้ไขข้อมูลไม่สำเร็จ: ' + err.message);
                         btn.disabled = false;
