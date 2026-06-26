@@ -282,6 +282,10 @@ class InMemoryService {
         this.data = this.data.filter(r => String(r.rowNumber) !== String(rowNumber));
         return { success: true };
     }
+    async updateRecord(rowNumber, data) {
+        this.data = this.data.map(r => String(r.rowNumber) === String(rowNumber) ? { ...r, ...data } : r);
+        return { success: true };
+    }
     async getAll() { return this.data; }
     getLocalData() { return this.data; }
     async getMasterData() {
@@ -325,6 +329,19 @@ class GoogleSheetService {
         const result = await response.json();
         if (!result.success) throw new Error(result.error || 'Delete failed');
         this.cachedData = this.cachedData.filter(r => String(r.rowNumber) !== String(rowNumber));
+        return result;
+    }
+
+    async updateRecord(rowNumber, data) {
+        if (!rowNumber) throw new Error('ไม่มี rowNumber สำหรับแก้ไขข้อมูลนี้');
+        const response = await fetch(this.url, {
+            method: 'POST',
+            body: JSON.stringify({ action: "update_record", rowNumber, data }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+        });
+        const result = await response.json();
+        if (!result.success) throw new Error(result.error || 'Update failed');
+        this.cachedData = this.cachedData.map(r => String(r.rowNumber) === String(rowNumber) ? { ...r, ...data } : r);
         return result;
     }
 
@@ -2248,6 +2265,68 @@ class AppController {
         return null;
     }
 
+    _buildOptions(options, selectedValue) {
+        return options.map(({ value, label }) => {
+            const selected = String(value) === String(selectedValue) ? 'selected' : '';
+            return `<option value="${this._escapeHtml(value)}" ${selected}>${this._escapeHtml(label)}</option>`;
+        }).join('');
+    }
+
+    _machineOptions(selectedValue) {
+        const machines = Object.keys(this.machineAssignments || {});
+        if (selectedValue && !machines.includes(selectedValue)) machines.unshift(selectedValue);
+        return this._buildOptions(machines.map(m => ({ value: m, label: m })), selectedValue);
+    }
+
+    _partOptions(selectedValue) {
+        return this._buildOptions(Object.keys(PART_SPECS).map(part => ({ value: part, label: part })), selectedValue);
+    }
+
+    _parameterOptions(part, selectedValue) {
+        const specs = PART_SPECS[part] || {};
+        return this._buildOptions(Object.entries(specs).map(([key, spec]) => ({
+            value: key,
+            label: `${key} - ${spec.name.split(':')[0]}`
+        })), selectedValue);
+    }
+
+    _renderSuspiciousRow(record) {
+        const canManage = !!record.rowNumber;
+        const reason = this._getSuspiciousReason(record) || 'แก้ไขแล้วอาจอยู่ในสเปค';
+        const reasonClass = reason.includes('LSL') || reason.includes('USL') || reason.includes('ไม่ผ่าน')
+            ? 'text-red-700 bg-red-50'
+            : 'text-yellow-700 bg-yellow-50';
+        const spec = PART_SPECS[record.part]?.[record.parameter];
+        const valueInput = spec?.type === 'gauge'
+            ? `<select data-field="value" class="w-24 p-1.5 border border-gray-300 rounded-lg bg-white">
+                   <option value="PASS" ${String(record.value).toUpperCase() === 'PASS' ? 'selected' : ''}>PASS</option>
+                   <option value="FAIL" ${String(record.value).toUpperCase() === 'FAIL' ? 'selected' : ''}>FAIL</option>
+               </select>`
+            : `<input data-field="value" type="number" step="0.001" value="${this._escapeHtml(record.value)}" class="w-24 p-1.5 border border-gray-300 rounded-lg text-right">`;
+
+        return `
+            <tr class="border-b align-top" data-row-number="${this._escapeHtml(record.rowNumber)}">
+                <td class="px-3 py-2 whitespace-nowrap">${this._escapeHtml(String(record.timestamp).replace(',', ''))}</td>
+                <td class="px-3 py-2">
+                    <select data-field="machine" class="w-44 p-1.5 border border-gray-300 rounded-lg bg-white">${this._machineOptions(record.machine)}</select>
+                </td>
+                <td class="px-3 py-2">
+                    <select data-field="part" class="w-52 p-1.5 border border-gray-300 rounded-lg bg-white">${this._partOptions(record.part)}</select>
+                </td>
+                <td class="px-3 py-2">
+                    <select data-field="parameter" class="w-44 p-1.5 border border-gray-300 rounded-lg bg-white">${this._parameterOptions(record.part, record.parameter)}</select>
+                </td>
+                <td class="px-3 py-2">${this._escapeHtml(record.operator)}</td>
+                <td class="px-3 py-2 text-right">${valueInput}</td>
+                <td class="px-3 py-2"><span class="${reasonClass} px-2 py-1 rounded text-xs font-medium">${this._escapeHtml(reason)}</span></td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                    <button type="button" data-action="save" ${canManage ? '' : 'disabled'} class="px-2 py-1 text-xs rounded ${canManage ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}">บันทึก</button>
+                    <button type="button" data-action="delete" ${canManage ? '' : 'disabled'} class="px-2 py-1 text-xs rounded ${canManage ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}">ลบ</button>
+                </td>
+            </tr>
+        `;
+    }
+
     showSuspiciousDataManager() {
         const modal = document.getElementById('settings-modal');
         if (!modal) return;
@@ -2259,78 +2338,131 @@ class AppController {
             .filter(r => !currentPart || r.part === currentPart)
             .map(r => ({ ...r, suspiciousReason: this._getSuspiciousReason(r) }))
             .filter(r => r.suspiciousReason)
-            .reverse()
-            .slice(0, 100);
-
-        const rows = records.map(r => {
-            const canDelete = !!r.rowNumber;
-            const valueClass = String(r.suspiciousReason).includes('LSL') || String(r.suspiciousReason).includes('USL') || String(r.suspiciousReason).includes('ไม่ผ่าน')
-                ? 'text-red-700 bg-red-50'
-                : 'text-yellow-700 bg-yellow-50';
-            return `
-                <tr class="border-b align-top">
-                    <td class="px-3 py-2 whitespace-nowrap">${this._escapeHtml(String(r.timestamp).replace(',', ''))}</td>
-                    <td class="px-3 py-2">${this._escapeHtml(r.part)}<br><span class="text-gray-400">${this._escapeHtml(r.parameter)}</span></td>
-                    <td class="px-3 py-2">${this._escapeHtml(r.operator)}</td>
-                    <td class="px-3 py-2 text-right font-bold">${this._escapeHtml(r.value)}</td>
-                    <td class="px-3 py-2"><span class="${valueClass} px-2 py-1 rounded text-xs font-medium">${this._escapeHtml(r.suspiciousReason)}</span></td>
-                    <td class="px-3 py-2 text-right">
-                        <button type="button" data-delete-row="${this._escapeHtml(r.rowNumber)}" ${canDelete ? '' : 'disabled'} class="delete-suspicious-btn px-2 py-1 text-xs rounded ${canDelete ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}">ลบ</button>
-                    </td>
-                </tr>
-            `;
-        }).join('');
+            .reverse();
 
         modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
         modal.innerHTML = `
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-7xl max-h-[85vh] overflow-hidden flex flex-col">
                 <div class="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center justify-between">
                     <div>
                         <h3 class="text-sm font-bold text-blue-900">จัดการข้อมูลที่น่าสงสัย</h3>
-                        <p class="text-xs text-blue-700">แสดงข้อมูลของเครื่อง/รุ่นที่เลือกอยู่ สูงสุด 100 รายการล่าสุด</p>
+                        <p id="settings-record-count" class="text-xs text-blue-700">โหลดครั้งละ 50 รายการเมื่อเลื่อนลง</p>
                     </div>
                     <button id="settings-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none" type="button">&times;</button>
                 </div>
-                <div class="overflow-auto">
+                <div id="settings-table-scroll" class="overflow-auto">
                     <table class="min-w-full text-xs text-left text-gray-600">
                         <thead class="sticky top-0 bg-gray-50 text-gray-700 border-b">
                             <tr>
                                 <th class="px-3 py-2">เวลา</th>
-                                <th class="px-3 py-2">รุ่น / Item</th>
+                                <th class="px-3 py-2">เครื่อง</th>
+                                <th class="px-3 py-2">รุ่น</th>
+                                <th class="px-3 py-2">Item</th>
                                 <th class="px-3 py-2">พนักงาน</th>
                                 <th class="px-3 py-2 text-right">ค่า</th>
                                 <th class="px-3 py-2">เหตุผล</th>
                                 <th class="px-3 py-2 text-right">จัดการ</th>
                             </tr>
                         </thead>
-                        <tbody>
-                            ${rows || '<tr><td colspan="6" class="px-3 py-8 text-center text-gray-400">ไม่พบข้อมูลที่น่าสงสัยในชุดข้อมูลปัจจุบัน</td></tr>'}
-                        </tbody>
+                        <tbody id="settings-record-rows"></tbody>
                     </table>
                 </div>
                 <div class="px-5 py-3 border-t bg-gray-50 text-xs text-gray-500">
-                    ข้อมูลที่ลบจะถูกลบออกจาก Google Sheet โดยตรง โปรดตรวจสอบก่อนลบ
+                    แก้ไขเครื่อง รุ่น Item หรือค่าได้ทีละแถว แล้วกดบันทึก ข้อมูลจะถูกอัปเดตใน Google Sheet โดยตรง
                 </div>
             </div>
         `;
         document.getElementById('settings-close').onclick = () => modal.remove();
-        modal.querySelectorAll('.delete-suspicious-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const rowNumber = btn.dataset.deleteRow;
-                if (!rowNumber || !confirm(`ยืนยันลบข้อมูลแถวที่ ${rowNumber} หรือไม่?`)) return;
-                btn.disabled = true;
-                btn.textContent = 'กำลังลบ...';
-                try {
-                    await this.db.deleteRecord(rowNumber);
-                    await this.refreshDashboard(false, false);
-                    this.showSuspiciousDataManager();
-                } catch (err) {
-                    alert('ลบข้อมูลไม่สำเร็จ: ' + err.message);
-                    btn.disabled = false;
-                    btn.textContent = 'ลบ';
+
+        const tbody = document.getElementById('settings-record-rows');
+        const scroller = document.getElementById('settings-table-scroll');
+        const countEl = document.getElementById('settings-record-count');
+        const pageSize = 50;
+        let rendered = 0;
+
+        const bindRows = (scope) => {
+            scope.querySelectorAll('select[data-field="part"]').forEach(select => {
+                select.addEventListener('change', () => {
+                    const tr = select.closest('tr');
+                    const paramSelect = tr.querySelector('select[data-field="parameter"]');
+                    paramSelect.innerHTML = this._parameterOptions(select.value, Object.keys(PART_SPECS[select.value] || {})[0] || '');
+                });
+            });
+
+            scope.querySelectorAll('button[data-action]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const tr = btn.closest('tr');
+                    const rowNumber = tr.dataset.rowNumber;
+                    if (!rowNumber) return;
+
+                    if (btn.dataset.action === 'delete') {
+                        if (!confirm(`ยืนยันลบข้อมูลแถวที่ ${rowNumber} หรือไม่?`)) return;
+                        btn.disabled = true;
+                        btn.textContent = 'กำลังลบ...';
+                        try {
+                            await this.db.deleteRecord(rowNumber);
+                            await this.refreshDashboard(false, false);
+                            this.showSuspiciousDataManager();
+                        } catch (err) {
+                            alert('ลบข้อมูลไม่สำเร็จ: ' + err.message);
+                            btn.disabled = false;
+                            btn.textContent = 'ลบ';
+                        }
+                        return;
+                    }
+
+                    const updated = {
+                        machine: tr.querySelector('[data-field="machine"]').value,
+                        part: tr.querySelector('[data-field="part"]').value,
+                        parameter: tr.querySelector('[data-field="parameter"]').value,
+                        operator: records.find(r => String(r.rowNumber) === String(rowNumber))?.operator || '',
+                        value: tr.querySelector('[data-field="value"]').value,
+                        setupType: records.find(r => String(r.rowNumber) === String(rowNumber))?.setupType || ''
+                    };
+
+                    if (!updated.machine || !updated.part || !updated.parameter || updated.value === '') {
+                        alert('กรุณาเลือกเครื่อง รุ่น Item และกรอกค่าให้ครบ');
+                        return;
+                    }
+
+                    btn.disabled = true;
+                    btn.textContent = 'กำลังบันทึก...';
+                    try {
+                        await this.db.updateRecord(rowNumber, updated);
+                        await this.refreshDashboard(false, false);
+                        this.showSuspiciousDataManager();
+                    } catch (err) {
+                        alert('แก้ไขข้อมูลไม่สำเร็จ: ' + err.message);
+                        btn.disabled = false;
+                        btn.textContent = 'บันทึก';
+                    }
+                });
+            });
+        };
+
+        const renderMore = () => {
+            if (!tbody || rendered >= records.length) return;
+            const batch = records.slice(rendered, rendered + pageSize);
+            const temp = document.createElement('tbody');
+            temp.innerHTML = batch.map(r => this._renderSuspiciousRow(r)).join('');
+            const newRows = Array.from(temp.children);
+            newRows.forEach(row => tbody.appendChild(row));
+            newRows.forEach(row => bindRows(row));
+            rendered += batch.length;
+            if (countEl) countEl.textContent = `แสดง ${rendered} จาก ${records.length} รายการ โหลดเพิ่มครั้งละ 50 เมื่อเลื่อนลง`;
+        };
+
+        if (records.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-8 text-center text-gray-400">ไม่พบข้อมูลที่น่าสงสัยในชุดข้อมูลปัจจุบัน</td></tr>';
+            if (countEl) countEl.textContent = 'ไม่พบข้อมูลที่น่าสงสัยในชุดข้อมูลปัจจุบัน';
+        } else {
+            renderMore();
+            scroller.addEventListener('scroll', () => {
+                if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 80) {
+                    renderMore();
                 }
             });
-        });
+        }
     }
 
     addMeasuredValueRow() {

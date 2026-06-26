@@ -146,6 +146,22 @@ class SheetRepository {
     sheet.deleteRow(row);
   }
 
+  updateRecord(rowNumber, data) {
+    const sheet = this._getSheet();
+    const row = Number(rowNumber);
+    if (!row || row <= 1 || row > sheet.getLastRow()) {
+      throw new Error("Invalid record row.");
+    }
+    sheet.getRange(row, 2, 1, 6).setValues([[
+      data.machine,
+      data.part,
+      data.parameter,
+      data.operator,
+      data.value,
+      data.setupType || ""
+    ]]);
+  }
+
   getAllRecords() {
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
@@ -188,6 +204,12 @@ function doPost(e) {
       const repo = new SheetRepository();
       repo.deleteRecord(postData.rowNumber);
       return ResponseHelper.success(null, "Record deleted");
+    }
+
+    if (postData.action === "update_record") {
+      const repo = new SheetRepository();
+      repo.updateRecord(postData.rowNumber, postData.data);
+      return ResponseHelper.success(null, "Record updated");
     }
 
     if (postData.action === "upload_image") {
