@@ -2294,6 +2294,9 @@ class AppController {
         if (isNaN(value)) return 'ค่าไม่ใช่ตัวเลข';
         if (spec.lsl !== null && value < spec.lsl) return `ต่ำกว่า LSL ${spec.lsl}`;
         if (spec.usl !== null && value > spec.usl) return `สูงกว่า USL ${spec.usl}`;
+        if (record.parameter === 'item7' && Math.abs(value - 30.0) >= 2.0) {
+            return value > 30.0 ? 'Item 7 สูงกว่า 30.00 เกิน 2.00' : 'Item 7 ต่ำกว่า 30.00 เกิน 2.00';
+        }
         return null;
     }
 
