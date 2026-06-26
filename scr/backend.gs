@@ -13,7 +13,10 @@ const Config = {
   MASTER_SHEET_ID: "11NGAEXnTZIXMseO_0vfA-yRWxBXEiWpNkCIdIQq2ftQ",
 
   // ชื่อแท็บใน Google Sheet สำหรับเก็บรูปภาพ (เก็บเป็น base64 ใน Sheet โดยตรง — ไม่ใช้ Drive)
-  IMAGE_SHEET_NAME: "ItemImages"
+  IMAGE_SHEET_NAME: "ItemImages",
+
+  // รหัสเข้าเมนูจัดการข้อมูล ตั้งไว้ฝั่ง Cloud ไม่ฝังในหน้าเว็บ
+  SETTINGS_PASSWORD: "Cpk/cp"
 };
 
 /**
@@ -198,6 +201,11 @@ function doPost(e) {
       const repo = new SheetRepository();
       repo.addRecord(postData.data);
       return ResponseHelper.success(null, "Data saved successfully");
+    }
+
+    if (postData.action === "verify_settings_password") {
+      const ok = String(postData.password || "") === Config.SETTINGS_PASSWORD;
+      return ResponseHelper.success({ ok });
     }
 
     if (postData.action === "delete_record") {

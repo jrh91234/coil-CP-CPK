@@ -286,6 +286,9 @@ class InMemoryService {
         this.data = this.data.map(r => String(r.rowNumber) === String(rowNumber) ? { ...r, ...data } : r);
         return { success: true };
     }
+    async verifySettingsPassword(password) {
+        return password === 'Cpk/cp';
+    }
     async getAll() { return this.data; }
     getLocalData() { return this.data; }
     async getMasterData() {
@@ -343,6 +346,17 @@ class GoogleSheetService {
         if (!result.success) throw new Error(result.error || 'Update failed');
         this.cachedData = this.cachedData.map(r => String(r.rowNumber) === String(rowNumber) ? { ...r, ...data } : r);
         return result;
+    }
+
+    async verifySettingsPassword(password) {
+        const response = await fetch(this.url, {
+            method: 'POST',
+            body: JSON.stringify({ action: "verify_settings_password", password }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+        });
+        const result = await response.json();
+        if (!result.success) throw new Error(result.error || 'Password verification failed');
+        return !!result.data?.ok;
     }
 
     async getAll() {
@@ -2230,7 +2244,7 @@ class AppController {
                     <p id="settings-error" class="hidden text-xs text-red-600">รหัสไม่ถูกต้อง</p>
                     <div class="grid grid-cols-2 gap-2 pt-1">
                         <button type="button" id="settings-cancel" class="py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">ยกเลิก</button>
-                        <button type="submit" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold">เข้าสู่เมนู</button>
+                        <button type="submit" id="settings-submit" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold">เข้าสู่เมนู</button>
                     </div>
                 </form>
             </div>
@@ -2239,14 +2253,29 @@ class AppController {
         document.getElementById('settings-close').onclick = close;
         document.getElementById('settings-cancel').onclick = close;
         document.getElementById('settings-password')?.focus();
-        document.getElementById('settings-password-form').onsubmit = (e) => {
+        document.getElementById('settings-password-form').onsubmit = async (e) => {
             e.preventDefault();
+            const submitBtn = document.getElementById('settings-submit');
+            const errorEl = document.getElementById('settings-error');
             const pass = document.getElementById('settings-password').value;
-            if (pass !== 'Cpk/cp') {
-                document.getElementById('settings-error').classList.remove('hidden');
-                return;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'กำลังตรวจ...';
+            errorEl.classList.add('hidden');
+            try {
+                const ok = await this.db.verifySettingsPassword(pass);
+                if (!ok) {
+                    errorEl.textContent = 'รหัสไม่ถูกต้อง';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                this.showSuspiciousDataManager();
+            } catch (err) {
+                errorEl.textContent = 'ตรวจรหัสผ่าน cloud ไม่สำเร็จ: ' + err.message;
+                errorEl.classList.remove('hidden');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'เข้าสู่เมนู';
             }
-            this.showSuspiciousDataManager();
         };
     }
 
