@@ -2371,7 +2371,7 @@ class AppController {
 
         modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
         modal.innerHTML = `
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-7xl max-h-[85vh] overflow-hidden flex flex-col">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-7xl h-[85vh] max-h-[85vh] overflow-hidden flex flex-col">
                 <div class="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center justify-between">
                     <div>
                         <h3 class="text-sm font-bold text-blue-900">จัดการข้อมูลที่น่าสงสัย</h3>
@@ -2379,7 +2379,7 @@ class AppController {
                     </div>
                     <button id="settings-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none" type="button">&times;</button>
                 </div>
-                <div id="settings-table-scroll" class="overflow-auto">
+                <div id="settings-table-scroll" class="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
                     <table class="min-w-full text-xs text-left text-gray-600">
                         <thead class="sticky top-0 bg-gray-50 text-gray-700 border-b">
                             <tr>
