@@ -1704,8 +1704,7 @@ class DashboardUI {
             // กลุ่มรายวันผลิต: คำนวณค่าเฉลี่ยต่อวัน
             const grouped = {};
             records.forEach(r => {
-                const d = StatUtils.parseThaiDate(r.timestamp);
-                const key = d ? StatUtils.dateToISO(d) : '?';
+                const key = StatUtils.prodDateISO(r.timestamp);
                 if (!grouped[key]) grouped[key] = { values: [], setupTypes: [] };
                 const v = parseFloat(r.value);
                 if (!isNaN(v)) grouped[key].values.push(v);
