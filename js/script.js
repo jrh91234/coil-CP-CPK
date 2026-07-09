@@ -751,6 +751,16 @@ class DashboardUI {
         return null;
     }
 
+    _checkItem7LowDeviation(value, currentParam, spec) {
+        if (currentParam !== 'item7') return null;
+        const std = spec?.usl ?? spec?.target;
+        if (std === null || std === undefined) return null;
+        if (std - value >= 3) {
+            return `ค่า <b>${value}</b> ต่ำกว่ามาตรฐาน Item 7 (${std}) เกิน 3 หน่วย กรุณาตรวจสอบว่าเลือก Item ถูกต้องหรือไม่ (มักพบว่านำค่าของ <b>Item 2</b> มาลงในช่อง Item 7 โดยไม่ได้ตั้งใจ)`;
+        }
+        return null;
+    }
+
     _checkCrossItemMatch(value, currentParam, currentSpec, partSpecs) {
         // เตือนเฉพาะกรณีที่ค่าอยู่นอก range ของ item ปัจจุบัน
         const inCurrent = (currentSpec.lsl === null || value >= currentSpec.lsl) &&
@@ -798,6 +808,11 @@ class DashboardUI {
             if (match && !seen.has(`c${num}`)) {
                 seen.add(`c${num}`);
                 warnings.push(`ค่า <b>${num}</b> ตรงกับ range ของ <b>${match.name}</b> (${match.lsl}–${match.usl}) ไม่ใช่ ${specName}`);
+            }
+            const item7Low = this._checkItem7LowDeviation(num, currentParam, currentSpec);
+            if (item7Low && !seen.has(`i7${num}`)) {
+                seen.add(`i7${num}`);
+                warnings.push(item7Low);
             }
         }
         if (warnings.length === 0) { onConfirm(); return; }
