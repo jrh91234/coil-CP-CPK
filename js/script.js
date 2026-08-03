@@ -4,7 +4,11 @@
 const AppConfig = {
     // ⚠️ นำ Web App URL ที่ได้จากการกด Deploy ใน Apps Script ของคุณมาใส่ตรงนี้
     GOOGLE_SHEET_URL: "https://script.google.com/macros/s/AKfycbw_z0CSt6TNiYiFTiuXflXzpAw8-NESmuSJEmKNALrgV8QV53NOHUKP8O5XwD6M8c2r/exec",
-    USE_GOOGLE_SHEET: true // เปลี่ยนเป็น false หากต้องการทดสอบแบบ In-Memory โดยไม่ต่อเน็ต
+    USE_GOOGLE_SHEET: true, // เปลี่ยนเป็น false หากต้องการทดสอบแบบ In-Memory โดยไม่ต่อเน็ต
+
+    // ช่วงวันที่เริ่มต้นตอนเปิดหน้า (จำนวนวันย้อนหลัง, -1 = ทั้งหมด)
+    // ตั้งเป็นช่วงสั้นเพื่อให้เปิดหน้าเว็บเร็ว ผู้ใช้กดปุ่ม "ทั้งหมด" ดูย้อนหลังได้ตลอด
+    DEFAULT_DATE_PRESET_DAYS: 30
 };
 
 // ตารางการสุ่มตัวอย่างทุก 2 ชั่วโมง (เว้นช่วงพัก)
@@ -359,13 +363,24 @@ class GoogleSheetService {
         return !!result.data?.ok;
     }
 
+    /**
+     * options.from / options.to (YYYY-MM-DD) จะถูกส่งไปกรองฝั่ง server
+     * ทำให้ไม่ต้องดาวน์โหลดข้อมูลทั้งชีตทุกครั้งที่ค้นหา
+     */
     async getAll(options = {}) {
         try {
-            const response = await fetch(`${this.url}?action=get`, { signal: options.signal });
+            const params = new URLSearchParams({ action: 'get' });
+            if (options.from) params.set('from', options.from);
+            if (options.to) params.set('to', options.to);
+            const isRanged = !!(options.from || options.to);
+
+            const response = await fetch(`${this.url}?${params.toString()}`, { signal: options.signal });
             const result = await response.json();
             const serverData = result.data || [];
 
-            if (this.pendingQueue.length > 0) {
+            // เทียบ pending กับ server ได้เฉพาะตอนดึงข้อมูลทั้งหมด
+            // ถ้ากรองช่วงวันที่อยู่ รายการที่อยู่นอกช่วงจะหาไม่เจอ แล้วจะถูกส่งซ้ำโดยไม่จำเป็น
+            if (!isRanged && this.pendingQueue.length > 0) {
                 this.pendingQueue = this.pendingQueue.filter(pending => {
                     const isAlreadyOnServer = serverData.some(server =>
                         server.part === pending.part &&
@@ -516,6 +531,9 @@ class DashboardUI {
         this.bellCurveMode = null; // 'numeric' | 'gauge'
         this.showSixSigma = false;
         this._currentItemKey = null;
+        this._imageVersions = null;  // { key: version } — null = ยังไม่รู้รายการรูปบน cloud
+        this._imageFetches = {};     // กันการยิงโหลดรูป key เดิมซ้ำซ้อน
+        this._imageMissing = {};     // key ที่ยืนยันแล้วว่าไม่มีรูปบน cloud
         this.elements = {
             machineSelect: document.getElementById('machine-id'),
             partSelect: document.getElementById('part-id'),
@@ -537,8 +555,11 @@ class DashboardUI {
             kpiCpkCard: document.getElementById('kpi-cpk-card')
         };
 
-        // โหลดรูปภาพจาก Cloud เมื่อเปิดหน้า (fire-and-forget)
-        if (AppConfig.USE_GOOGLE_SHEET) this._loadImagesFromCloud();
+        // โหลดเฉพาะ "รายชื่อรูป + version" ตอนเปิดหน้า (payload เล็กมาก)
+        // ตัวรูป base64 จะโหลดทีละใบเมื่อผู้ใช้เปิดดูจริง และ cache ไว้ใน localStorage
+        this._manifestReady = AppConfig.USE_GOOGLE_SHEET
+            ? this._loadImageManifest()
+            : Promise.resolve();
 
         // ผูก upload/delete ผ่าน event delegation บน document (ปุ่มถูกสร้าง dynamic)
         document.addEventListener('change', (e) => {
@@ -643,25 +664,116 @@ class DashboardUI {
             imgEl.classList.add('hidden');
             noneEl?.classList.remove('hidden');
             deleteBtn?.classList.add('hidden');
+            // ยังไม่มีรูปในหน่วยความจำ — ลองดึงจาก cache/cloud แล้วค่อยอัปเดต panel
+            this._ensureImageLoaded(itemKey);
         }
     }
 
-    async _loadImagesFromCloud() {
+    // ---- Image cache (localStorage) ----
+
+    _imageCacheKey(itemKey) {
+        return `cpk_img_${itemKey}`;
+    }
+
+    _readImageCache(itemKey, version) {
         try {
-            const res = await fetch(`${AppConfig.GOOGLE_SHEET_URL}?action=get_images`);
+            const raw = localStorage.getItem(this._imageCacheKey(itemKey));
+            if (!raw) return null;
+            const entry = JSON.parse(raw);
+            if (String(entry.v) !== String(version)) return null; // รูปถูกเปลี่ยนบน cloud แล้ว
+            return entry.d || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    _writeImageCache(itemKey, version, dataUrl) {
+        const payload = JSON.stringify({ v: String(version ?? ''), d: dataUrl });
+        try {
+            localStorage.setItem(this._imageCacheKey(itemKey), payload);
+        } catch (e) {
+            // localStorage เต็ม — ล้าง cache รูปเก่าทั้งหมดแล้วลองใหม่ครั้งเดียว
+            try {
+                Object.keys(localStorage)
+                    .filter(k => k.startsWith('cpk_img_'))
+                    .forEach(k => localStorage.removeItem(k));
+                localStorage.setItem(this._imageCacheKey(itemKey), payload);
+            } catch (e2) {
+                console.warn('เก็บรูปลง cache ไม่สำเร็จ:', e2);
+            }
+        }
+    }
+
+    _clearImageCache(itemKey) {
+        try {
+            localStorage.removeItem(this._imageCacheKey(itemKey));
+        } catch (e) { /* ไม่ critical */ }
+    }
+
+    // ---- Image loading ----
+
+    // โหลดแค่รายชื่อ key + version ไม่ดึง base64
+    async _loadImageManifest() {
+        try {
+            const res = await fetch(`${AppConfig.GOOGLE_SHEET_URL}?action=get_image_keys`);
             const json = await res.json();
-            if (json.success && json.data) {
-                Object.assign(ITEM_IMAGES, json.data);
-                // Refresh panel หากมี item ถูกเลือกอยู่แล้ว (แก้ race condition)
-                if (this._currentItemKey && ITEM_IMAGES[this._currentItemKey]) {
-                    const titleEl = document.getElementById('item-image-panel-title');
-                    const itemName = titleEl?.textContent?.replace('ตำแหน่งวัด — ', '') || this._currentItemKey;
-                    this._updateImagePanel(this._currentItemKey, itemName, ITEM_IMAGES[this._currentItemKey]);
-                }
+            if (json.success && json.data && json.data.images) {
+                this._imageVersions = json.data.images;
             }
         } catch (e) {
-            console.warn('Could not load images from cloud:', e);
+            console.warn('โหลดรายการรูปจาก cloud ไม่สำเร็จ:', e);
         }
+    }
+
+    _refreshCurrentImagePanel(itemKey) {
+        if (this._currentItemKey !== itemKey) return;
+        const titleEl = document.getElementById('item-image-panel-title');
+        const itemName = titleEl?.textContent?.replace('ตำแหน่งวัด — ', '') || itemKey;
+        this._updateImagePanel(itemKey, itemName, ITEM_IMAGES[itemKey] || '');
+    }
+
+    // ดึงรูปของ item ที่กำลังเปิดดู — ใช้ cache ก่อน ถ้าไม่มีหรือ version ไม่ตรงจึงยิง server
+    async _ensureImageLoaded(itemKey) {
+        if (!itemKey || !AppConfig.USE_GOOGLE_SHEET) return;
+        if (ITEM_IMAGES[itemKey]) return;              // มีรูปในหน่วยความจำแล้ว
+        if (this._imageFetches[itemKey]) return;       // กำลังโหลดอยู่
+        if (this._imageMissing[itemKey]) return;       // เคยถามแล้วว่าไม่มีรูป ไม่ต้องถามซ้ำ
+
+        await this._manifestReady;
+
+        const knownVersions = this._imageVersions;
+        // manifest โหลดสำเร็จและไม่มี key นี้ = item นี้ไม่มีรูปบน cloud ไม่ต้องยิง server
+        if (knownVersions && !(itemKey in knownVersions)) return;
+
+        const version = knownVersions ? knownVersions[itemKey] : null;
+        if (version !== null) {
+            const cached = this._readImageCache(itemKey, version);
+            if (cached) {
+                ITEM_IMAGES[itemKey] = cached;
+                this._refreshCurrentImagePanel(itemKey);
+                return;
+            }
+        }
+
+        this._imageFetches[itemKey] = (async () => {
+            try {
+                const url = `${AppConfig.GOOGLE_SHEET_URL}?action=get_image&key=${encodeURIComponent(itemKey)}`;
+                const res = await fetch(url);
+                const json = await res.json();
+                const dataUrl = json.success && json.data ? json.data.dataUrl : '';
+                if (dataUrl) {
+                    ITEM_IMAGES[itemKey] = dataUrl;
+                    this._writeImageCache(itemKey, json.data.version ?? version ?? '', dataUrl);
+                    this._refreshCurrentImagePanel(itemKey);
+                } else {
+                    this._imageMissing[itemKey] = true;
+                }
+            } catch (e) {
+                console.warn('โหลดรูปจาก cloud ไม่สำเร็จ:', e);
+            } finally {
+                delete this._imageFetches[itemKey];
+            }
+        })();
     }
 
     _compressToDataUrl(file) {
@@ -695,6 +807,10 @@ class DashboardUI {
             const json = await res.json();
             if (json.success && json.data?.url) {
                 ITEM_IMAGES[itemKey] = json.data.url;
+                const version = json.data.version ?? String(Date.now());
+                delete this._imageMissing[itemKey];
+                if (this._imageVersions) this._imageVersions[itemKey] = version;
+                this._writeImageCache(itemKey, version, json.data.url);
                 this._updateImagePanel(itemKey, null, json.data.url);
             } else {
                 alert('อัพโหลดไม่สำเร็จ: ' + (json.error || 'unknown error'));
@@ -719,6 +835,8 @@ class DashboardUI {
             this._setModalUploading(false);
         }
         ITEM_IMAGES[itemKey] = '';
+        if (this._imageVersions) delete this._imageVersions[itemKey];
+        this._clearImageCache(itemKey);
         this._updateImagePanel(itemKey, null, '');
     }
 
@@ -2008,10 +2126,19 @@ class AppController {
         this.ui = uiService;
         this.currentConfig = { target: 0, usl: 0, lsl: 0, name: '' };
         this.machineAssignments = {};
-        this.activeDatePreset = -1; // -1 = ทั้งหมด
+        this.activeDatePreset = AppConfig.DEFAULT_DATE_PRESET_DAYS; // -1 = ทั้งหมด
         this.allRecords = [];
         this.refreshSeq = 0;
         this.refreshAbortController = null;
+        this.loadedRangeKey = null; // ช่วงวันที่ของข้อมูลที่ถืออยู่ใน cache ปัจจุบัน
+        this._initializing = false; // กันไม่ให้ setup dropdown ตอน init ยิงโหลดซ้อน
+    }
+
+    // ช่วงวันที่ที่เลือกอยู่ ใช้ทั้งส่งไปกรองฝั่ง server และเช็คว่า cache ยังใช้ได้ไหม
+    _getDateRange() {
+        const from = document.getElementById('date-from')?.value || '';
+        const to = document.getElementById('date-to')?.value || '';
+        return { from, to, key: `${from}|${to}` };
     }
 
     _escapeHtml(value) {
@@ -2067,6 +2194,12 @@ class AppController {
     }
 
     _setDatePreset(days) {
+        this._applyDatePreset(days);
+        this.refreshDashboard(false, false);
+    }
+
+    // ตั้งค่าช่อง from/to ตาม preset โดยยังไม่ค้นหา (ใช้ตอน init ที่ต้องคุมลำดับการโหลดเอง)
+    _applyDatePreset(days) {
         this.activeDatePreset = days;
         const dateFrom = document.getElementById('date-from');
         const dateTo = document.getElementById('date-to');
@@ -2093,7 +2226,6 @@ class AppController {
         }
 
         this._updatePresetUI();
-        this.refreshDashboard(false, false);
     }
 
     _updatePresetUI() {
@@ -2113,6 +2245,15 @@ class AppController {
         this.ui.setStatus("กำลังเชื่อมต่อและโหลดข้อมูล...", "text-yellow-400");
         this.ui.setLoadingState(true);
 
+        // ตั้งช่วงวันที่เริ่มต้นก่อน เพื่อให้ request แรกดึงเฉพาะข้อมูลที่ต้องใช้จริง
+        this._applyDatePreset(AppConfig.DEFAULT_DATE_PRESET_DAYS);
+        const range = this._getDateRange();
+
+        // ยิงขนานกัน — master data ต้องเปิด Sheet อีกไฟล์ซึ่งช้า ไม่ควรให้ข้อมูลการวัดรอ
+        const recordsReady = this.db.getAll({ from: range.from, to: range.to })
+            .then(records => { this.loadedRangeKey = range.key; return records; })
+            .catch(err => { console.error('โหลดข้อมูลการวัดครั้งแรกไม่สำเร็จ:', err); return null; });
+
         const masterData = await this.db.getMasterData();
         this.machineAssignments = masterData.machineAssignments || {};
 
@@ -2120,12 +2261,16 @@ class AppController {
         this.ui.populateMachines(this.machineAssignments);
         this.ui.populateParts(PART_SPECS);
 
+        this._initializing = true;
         if (Object.keys(this.machineAssignments).length > 0) {
             this.ui.elements.machineSelect.selectedIndex = 1;
             this.handleMachineChange();
         }
+        this._initializing = false;
 
-        await this.refreshDashboard(false, false);
+        // ถ้า prefetch สำเร็จ ให้ใช้ cache ที่ได้มาเลย ไม่ต้องยิงซ้ำ
+        const prefetched = await recordsReady;
+        await this.refreshDashboard(false, prefetched !== null);
 
         this.ui.setLoadingState(false);
         const dbName = AppConfig.USE_GOOGLE_SHEET ? "Google Sheets (เชื่อมต่อแล้ว)" : "In-Memory (ทดสอบ)";
@@ -2286,7 +2431,8 @@ class AppController {
                     errorEl.classList.remove('hidden');
                     return;
                 }
-                this.showSuspiciousDataManager();
+                submitBtn.textContent = 'กำลังโหลดข้อมูล...';
+                await this.showSuspiciousDataManager();
             } catch (err) {
                 errorEl.textContent = 'ตรวจรหัสผ่าน cloud ไม่สำเร็จ: ' + err.message;
                 errorEl.classList.remove('hidden');
@@ -2377,11 +2523,23 @@ class AppController {
         `;
     }
 
-    showSuspiciousDataManager() {
+    async showSuspiciousDataManager() {
         const modal = document.getElementById('settings-modal');
         if (!modal) return;
 
-        const records = (this.allRecords || [])
+        // เมนูนี้ต้องเห็นข้อมูลน่าสงสัย "ทั้งหมด" ไม่ใช่แค่ช่วงวันที่ที่แดชบอร์ดกรองอยู่
+        let sourceRecords = this.allRecords || [];
+        if (this.loadedRangeKey !== '|') {
+            try {
+                sourceRecords = (await this.db.getAll({})) || [];
+                this.loadedRangeKey = '|'; // cache ตอนนี้ถือข้อมูลทั้งหมดแล้ว
+                this.allRecords = sourceRecords;
+            } catch (err) {
+                console.error('โหลดข้อมูลทั้งหมดสำหรับเมนูจัดการไม่สำเร็จ:', err);
+            }
+        }
+
+        const records = sourceRecords
             .map(r => ({ ...r, suspiciousReason: this._getSuspiciousReason(r) }))
             .filter(r => r.suspiciousReason)
             .reverse();
@@ -2713,6 +2871,9 @@ class AppController {
     }
 
     async refreshDashboard(shouldScrollToChart = false, useLocalCache = false) {
+        // ระหว่าง init ยังตั้งค่า dropdown ไม่เสร็จ ปล่อยให้ init เป็นคนเรียกครั้งเดียวตอนท้าย
+        if (this._initializing) return;
+
         const refreshId = ++this.refreshSeq;
         if (this.refreshAbortController) {
             this.refreshAbortController.abort();
@@ -2728,14 +2889,20 @@ class AppController {
             if (elapsedEl) elapsedEl.innerText = `${((performance.now() - t0) / 1000).toFixed(1)} วิ`;
         }, 100);
 
+        const range = this._getDateRange();
+        // ใช้ cache ได้เฉพาะเมื่อช่วงวันที่ยังเป็นช่วงเดิม — เปลี่ยนช่วงเมื่อไหร่ต้องดึงจาก server ใหม่
+        const canUseCache = useLocalCache && this.db.getLocalData && this.loadedRangeKey === range.key;
+
         let allRecords;
         try {
-        if (useLocalCache && this.db.getLocalData) {
+        if (canUseCache) {
             allRecords = this.db.getLocalData();
+            if (refreshId !== this.refreshSeq || signal.aborted) return;
         } else {
-            allRecords = await this.db.getAll({ signal });
+            allRecords = await this.db.getAll({ signal, from: range.from, to: range.to });
+            if (refreshId !== this.refreshSeq || signal.aborted) return;
+            this.loadedRangeKey = range.key;
         }
-        if (refreshId !== this.refreshSeq || signal.aborted) return;
         this.allRecords = allRecords || [];
 
         const machine = this.ui.elements.machineSelect.value;

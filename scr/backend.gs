@@ -39,9 +39,32 @@ const ResponseHelper = {
       .setMimeType(ContentService.MimeType.JSON);
   },
   
+  // จัดรูปแบบวันที่ด้วย JS ล้วน ไม่เรียก Session.getScriptTimeZone()/Utilities.formatDate ต่อแถว
+  // (เป็น service call ที่แพงมาก เมื่อข้อมูลหลักพันแถวจะกินเวลาเกือบทั้งหมดของ request)
+  // Apps Script รันด้วย timezone ของสคริปต์อยู่แล้ว ผลลัพธ์จึงเท่ากับของเดิม
   formatDate: (dateObj) => {
-    if (!(dateObj instanceof Date)) return dateObj; 
-    return Utilities.formatDate(dateObj, Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm:ss");
+    if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return dateObj;
+    const p2 = (n) => (n < 10 ? "0" + n : String(n));
+    return p2(dateObj.getDate()) + "/" + p2(dateObj.getMonth() + 1) + "/" + dateObj.getFullYear() +
+           " " + p2(dateObj.getHours()) + ":" + p2(dateObj.getMinutes()) + ":" + p2(dateObj.getSeconds());
+  }
+};
+
+/**
+ * แปลงวันที่รูปแบบ YYYY-MM-DD เป็นขอบเขตของ "วันผลิต"
+ * วันผลิตเริ่ม 08:00 ของวันนั้น ถึง 07:59:59 ของวันถัดไป (ตรงกับ logic ฝั่งหน้าเว็บ)
+ */
+const DateRange = {
+  start: (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || "").trim());
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 8, 0, 0);
+  },
+
+  end: (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || "").trim());
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1, 7, 59, 59);
   }
 };
 
@@ -62,12 +85,59 @@ class ImageRepository {
     let sheet = this.ss.getSheetByName(Config.IMAGE_SHEET_NAME);
     if (!sheet) {
       sheet = this.ss.insertSheet(Config.IMAGE_SHEET_NAME);
-      sheet.appendRow(["ImageKey", "DataPart1", "DataPart2", "DataPart3"]);
-      sheet.getRange(1, 1, 1, 4).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
+      sheet.appendRow(["ImageKey", "DataPart1", "DataPart2", "DataPart3", "Version"]);
+      sheet.getRange(1, 1, 1, 5).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
     }
     return sheet;
   }
 
+  // อ่านเฉพาะคอลัมน์ ImageKey — ไม่ดึง base64 ทั้งชีตเข้ามาเพื่อหาแถว
+  _readKeyColumn(sheet) {
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
+    return sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  }
+
+  _findRow(sheet, imageKey) {
+    const keys = this._readKeyColumn(sheet);
+    for (let i = 0; i < keys.length; i++) {
+      if (String(keys[i][0]) === String(imageKey)) return i + 2;
+    }
+    return -1;
+  }
+
+  /**
+   * รายการ key + version ของรูปทั้งหมด (ไม่มี base64) — payload เล็กมาก
+   * หน้าเว็บใช้ตรวจว่ารูปที่ cache ไว้ใน localStorage ยังใหม่อยู่หรือไม่
+   */
+  getKeys() {
+    const sheet = this._getSheet();
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return {};
+
+    const keys = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    const versions = sheet.getRange(2, 5, lastRow - 1, 1).getValues();
+    const result = {};
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i][0]) result[String(keys[i][0])] = String(versions[i][0] || "");
+    }
+    return result;
+  }
+
+  // ดึงรูปทีละใบตามที่หน้าเว็บเปิดดูจริง
+  getOne(imageKey) {
+    const sheet = this._getSheet();
+    const rowIdx = this._findRow(sheet, imageKey);
+    if (rowIdx < 0) return null;
+
+    const row = sheet.getRange(rowIdx, 1, 1, 5).getValues()[0];
+    return {
+      dataUrl: String(row[1] || '') + String(row[2] || '') + String(row[3] || ''),
+      version: String(row[4] || '')
+    };
+  }
+
+  // เก็บไว้เผื่อหน้าเว็บเวอร์ชันเก่าที่ยัง cache อยู่ในเบราว์เซอร์ผู้ใช้
   getAll() {
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
@@ -85,27 +155,22 @@ class ImageRepository {
     const part1 = dataUrl.substring(0, CHUNK);
     const part2 = dataUrl.substring(CHUNK, CHUNK * 2);
     const part3 = dataUrl.substring(CHUNK * 2);
+    const version = String(new Date().getTime());
 
     const sheet = this._getSheet();
-    const values = sheet.getDataRange().getValues();
-    let rowIdx = -1;
-    for (let i = 1; i < values.length; i++) {
-      if (String(values[i][0]) === imageKey) { rowIdx = i + 1; break; }
-    }
+    const rowIdx = this._findRow(sheet, imageKey);
     if (rowIdx > 0) {
-      sheet.getRange(rowIdx, 1, 1, 4).setValues([[imageKey, part1, part2, part3]]);
+      sheet.getRange(rowIdx, 1, 1, 5).setValues([[imageKey, part1, part2, part3, version]]);
     } else {
-      sheet.appendRow([imageKey, part1, part2, part3]);
+      sheet.appendRow([imageKey, part1, part2, part3, version]);
     }
-    return dataUrl;
+    return { dataUrl: dataUrl, version: version };
   }
 
   delete(imageKey) {
     const sheet = this._getSheet();
-    const values = sheet.getDataRange().getValues();
-    for (let i = 1; i < values.length; i++) {
-      if (String(values[i][0]) === imageKey) { sheet.deleteRow(i + 1); break; }
-    }
+    const rowIdx = this._findRow(sheet, imageKey);
+    if (rowIdx > 0) sheet.deleteRow(rowIdx);
   }
 }
 
@@ -165,24 +230,43 @@ class SheetRepository {
     ]]);
   }
 
-  getAllRecords() {
+  /**
+   * ดึงข้อมูลการวัด กรองช่วงวันที่ฝั่ง server ได้ (range = { from, to } รูปแบบ YYYY-MM-DD)
+   * การกรองก่อนส่งช่วยลดทั้งขนาด payload และงาน format วันที่ ซึ่งเป็นคอขวดหลักเมื่อข้อมูลเยอะ
+   */
+  getAllRecords(range) {
     const sheet = this._getSheet();
     const values = sheet.getDataRange().getValues();
-    
+
     if (values.length <= 1) return [];
-    
-    const rawData = values.slice(1);
-    
-    return rawData.map((row, index) => ({
-      rowNumber: index + 2,
-      timestamp: ResponseHelper.formatDate(new Date(row[0])),
-      machine: row[1],
-      part: row[2],
-      parameter: row[3],
-      operator: row[4],
-      value: row[5],
-      setupType: row[6] || ""
-    }));
+
+    const start = range ? DateRange.start(range.from) : null;
+    const end   = range ? DateRange.end(range.to)     : null;
+
+    const records = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const ts = (row[0] instanceof Date) ? row[0] : new Date(row[0]);
+      const isValidDate = (ts instanceof Date) && !isNaN(ts.getTime());
+
+      // แถวที่อ่านวันที่ไม่ได้ให้ผ่านเสมอ (พฤติกรรมเดียวกับตัวกรองฝั่งหน้าเว็บ)
+      if (isValidDate) {
+        if (start && ts < start) continue;
+        if (end && ts > end) continue;
+      }
+
+      records.push({
+        rowNumber: i + 1,
+        timestamp: isValidDate ? ResponseHelper.formatDate(ts) : row[0],
+        machine: row[1],
+        part: row[2],
+        parameter: row[3],
+        operator: row[4],
+        value: row[5],
+        setupType: row[6] || ""
+      });
+    }
+    return records;
   }
 }
 
@@ -222,8 +306,8 @@ function doPost(e) {
 
     if (postData.action === "upload_image") {
       const imgRepo = new ImageRepository(ss);
-      const url = imgRepo.save(postData.itemKey, postData.dataUrl);
-      return ResponseHelper.success({ url });
+      const saved = imgRepo.save(postData.itemKey, postData.dataUrl);
+      return ResponseHelper.success({ url: saved.dataUrl, version: saved.version });
     }
 
     if (postData.action === "delete_image") {
@@ -248,7 +332,24 @@ function doGet(e) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
     // ----------------------------------------------------
-    // ดึง URL รูปภาพตำแหน่งวัดทั้งหมด
+    // รายการ key + version ของรูป (ไม่มี base64) สำหรับตรวจ cache ฝั่งเบราว์เซอร์
+    // ----------------------------------------------------
+    if (e.parameter && e.parameter.action === "get_image_keys") {
+      const imgRepo = new ImageRepository(ss);
+      return ResponseHelper.success({ images: imgRepo.getKeys() });
+    }
+
+    // ----------------------------------------------------
+    // ดึงรูปตำแหน่งวัดทีละใบ
+    // ----------------------------------------------------
+    if (e.parameter && e.parameter.action === "get_image") {
+      const imgRepo = new ImageRepository(ss);
+      const image = imgRepo.getOne(e.parameter.key);
+      return ResponseHelper.success(image || { dataUrl: "", version: "" });
+    }
+
+    // ----------------------------------------------------
+    // ดึงรูปภาพตำแหน่งวัดทั้งหมด (endpoint เดิม เก็บไว้เพื่อ backward compatibility)
     // ----------------------------------------------------
     if (e.parameter && e.parameter.action === "get_images") {
       const imgRepo = new ImageRepository(ss);
@@ -291,10 +392,13 @@ function doGet(e) {
     }
 
     // ----------------------------------------------------
-    // ดึงข้อมูลประวัติ History ปกติ
+    // ดึงข้อมูลประวัติ History — ส่ง from/to (YYYY-MM-DD) มาเพื่อกรองฝั่ง server ได้
     // ----------------------------------------------------
     const repo = new SheetRepository();
-    const records = repo.getAllRecords();
+    const from = e.parameter ? e.parameter.from : "";
+    const to   = e.parameter ? e.parameter.to   : "";
+    const range = (from || to) ? { from: from, to: to } : null;
+    const records = repo.getAllRecords(range);
     return ResponseHelper.success(records);
     
   } catch (error) {
