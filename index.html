@@ -4,12 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPC Dashboard - Cp/Cpk Management</title>
-    <link rel="icon" type="image/png" href="images/icon.png">
+    <!-- favicon ใช้ SVG (2 KB) ส่วน PNG ย่อเหลือ 180x180 ไว้ให้ iOS -->
+    <link rel="icon" type="image/svg+xml" href="images/icon.svg">
+    <link rel="icon" type="image/png" sizes="180x180" href="images/icon.png">
     <link rel="apple-touch-icon" href="images/icon.png">
+
+    <!-- อุ่นเครื่องการเชื่อมต่อ CDN ตั้งแต่เริ่ม parse หน้า -->
+    <link rel="preconnect" href="https://cdn.tailwindcss.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <!-- ฟอนต์ Sarabun: โหลดตรงจาก head แทน @import ใน style.css เพื่อไม่ให้ต้องรอเป็นทอด ๆ -->
+    <link rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap">
 
     <!-- ดึง Tailwind CSS และ Chart.js มาใช้งาน -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <!-- แก้ไขพาธชี้ไปที่โฟลเดอร์ css -->
     <link rel="stylesheet" href="css/style.css">

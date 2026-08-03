@@ -1,6 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
+/* ฟอนต์ Sarabun ย้ายไปโหลดด้วย <link> ใน index.html แล้ว
+   (@import ทำให้เบราว์เซอร์ต้องรอโหลด style.css จบก่อนถึงจะเริ่มโหลดฟอนต์) */
 
-body { 
+body {
     font-family: 'Sarabun', sans-serif; 
 }
 
