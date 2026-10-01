@@ -12,10 +12,92 @@ const APPEARANCE_DEFAULTS = {
     PHOTO_MAX_SIDE: 1920,     // ขนาดปกติ (ด้านยาวสุด px)
     PHOTO_QUALITY: 0.85,
     SOON_MIN: 10,             // เหลือน้อยกว่านี้ (นาที) = ใกล้ถึงรอบ
-    STALE_HOURS: 12,          // ไม่ได้ตรวจนานกว่านี้ถือว่าเครื่องน่าจะหยุด — ไม่นับเป็น "เลยกำหนด"
     RENDER_TICK_MS: 30 * 1000,
     SERVER_POLL_MS: 3 * 60 * 1000,
     HISTORY_PAGE: 12
+};
+
+// ---------- เวลาทำงาน / เวลาพัก ----------
+// กะเช้า 08:00–17:00 (เวลาปกติ) + OT 17:30–20:00 · กะดึก 20:00–08:00
+// ช่วงพักใช้ชุดเดียวกับตารางสุ่มตัวอย่าง (SAMPLING_SCHEDULE) — ไม่นับเวลาพักเข้ารอบตรวจ
+// ช่วง OT และกะดึก นับรอบเฉพาะเครื่องที่ "มีการบันทึกข้อมูล" ในช่วงนั้น (= เครื่องเดินอยู่จริง)
+const WORK_SCHEDULE = {
+    DAY_START: '08:00',
+    REGULAR_END: '17:00',
+    OT_START: '17:30',
+    DAY_END: '20:00',
+    BREAKS: [...SAMPLING_SCHEDULE.day.breaks, ...SAMPLING_SCHEDULE.night.breaks]
+};
+
+const WorkTime = {
+    _min(hhmm) {
+        const [h, m] = hhmm.split(':').map(Number);
+        return h * 60 + m;
+    },
+
+    // เวลา hh:mm ของวันผลิต dayStart (dayStart = 08:00 ของวันนั้น) — เวลาก่อน 08:00 คือวันถัดไป
+    _at(dayStart, hhmm) {
+        let offset = this._min(hhmm) - this._min(WORK_SCHEDULE.DAY_START);
+        if (offset < 0) offset += 24 * 60;
+        return dayStart + offset * 60000;
+    },
+
+    prodDayStart(ts) {
+        const d = new Date(ts);
+        if (d.getHours() < 8) d.setDate(d.getDate() - 1);
+        return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0).getTime();
+    },
+
+    // ช่วงเวลาของวันผลิต:
+    //   window   = ช่วงที่ใช้เช็คว่าเครื่องเดินอยู่ (มีการบันทึกในช่วงนี้)
+    //   count    = ช่วงที่นับรอบตรวจ (ใช้คำนวณ "ตรวจครบรอบ")
+    //   anchor   = จุดเริ่มนับรอบ ถ้ายังไม่ได้ตรวจในกะนี้
+    segments(dayStart) {
+        const at = (t) => this._at(dayStart, t);
+        return [
+            { kind: 'regular', window: [dayStart, at(WORK_SCHEDULE.OT_START)],
+              count: [dayStart, at(WORK_SCHEDULE.REGULAR_END)], anchor: dayStart },
+            { kind: 'ot', window: [at(WORK_SCHEDULE.REGULAR_END), at(WORK_SCHEDULE.DAY_END)],
+              count: [at(WORK_SCHEDULE.OT_START), at(WORK_SCHEDULE.DAY_END)], anchor: dayStart },
+            { kind: 'night', window: [at(WORK_SCHEDULE.DAY_END), dayStart + 24 * 3600000],
+              count: [at(WORK_SCHEDULE.DAY_END), dayStart + 24 * 3600000], anchor: at(WORK_SCHEDULE.DAY_END) }
+        ];
+    },
+
+    // ช่วงที่ now อยู่ (ช่วงพักเย็น 17:00–17:30 ยังนับเป็นเวลาปกติ แต่นาฬิกาหยุดเดิน)
+    currentSegment(now) {
+        const dayStart = this.prodDayStart(now);
+        const segs = this.segments(dayStart);
+        const at = (t) => this._at(dayStart, t);
+        if (now < at(WORK_SCHEDULE.OT_START)) return { ...segs[0], window: [dayStart, at(WORK_SCHEDULE.OT_START)] };
+        if (now < at(WORK_SCHEDULE.DAY_END)) return segs[1];
+        return segs[2];
+    },
+
+    // ช่วงพักที่ครอบคลุมช่วง [a, b]
+    _breaks(a, b) {
+        const out = [];
+        const first = this.prodDayStart(a) - 24 * 3600000;
+        for (let day = first; day <= b; day += 24 * 3600000) {
+            WORK_SCHEDULE.BREAKS.forEach(([s, e]) => out.push([this._at(day, s), this._at(day, e)]));
+        }
+        return out;
+    },
+
+    // จำนวนนาทีทำงานจริงระหว่าง a → b (หักช่วงพักออก)
+    workMinutes(a, b) {
+        if (b <= a) return 0;
+        let ms = b - a;
+        this._breaks(a, b).forEach(([s, e]) => {
+            const overlap = Math.min(b, e) - Math.max(a, s);
+            if (overlap > 0) ms -= overlap;
+        });
+        return ms / 60000;
+    },
+
+    breakAt(now) {
+        return this._breaks(now, now).find(([s, e]) => now >= s && now < e) || null;
+    }
 };
 
 // ---------- Data service ----------
@@ -69,7 +151,7 @@ class AppearanceService {
                     lastByMachine[r.machine] = { ts: r.ts, result: r.result, operator: r.operator };
                 }
             });
-            return { records: [...this._memRecords], lastByMachine };
+            return { records: [...this._memRecords], lastByMachine, lastActivityByMachine: {} };
         }
         const params = new URLSearchParams({ action: 'get_appearance' });
         if (range?.from) params.set('from', range.from);
@@ -94,6 +176,8 @@ class AppearanceModule {
         this.photos = [];           // { dataUrl, uploaded: { id, url, sig } | null }
         this.records = [];
         this.lastByMachine = {};
+        this.lastActivityByMachine = {}; // เวลาบันทึกข้อมูลล่าสุดของแต่ละเครื่อง (วัดขนาด + ตรวจสภาพภายนอก) จาก server
+        this._localActivityCache = { ref: null, len: -1, map: {} };
         this.rangeKey = null;
         this.range = { from: '', to: '' };
         this.historyLimit = APPEARANCE_DEFAULTS.HISTORY_PAGE;
@@ -148,6 +232,7 @@ class AppearanceModule {
             if (key !== this.rangeKey) return; // ผู้ใช้เปลี่ยนช่วงวันที่ระหว่างโหลด
             this.records = (data.records || []).sort((a, b) => b.ts - a.ts);
             this.lastByMachine = data.lastByMachine || {};
+            this.lastActivityByMachine = data.lastActivityByMachine || {};
             this.loadError = '';
         } catch (err) {
             console.error('Appearance load error:', err);
@@ -217,15 +302,49 @@ class AppearanceModule {
 
     // ===== Status (รอบตรวจ) =====
 
+    // เวลาบันทึกล่าสุดของเครื่องจากข้อมูลวัดขนาดที่โหลดไว้ในหน้าเว็บ (รวมรายการที่ยังรออัปโหลด)
+    _localActivity() {
+        const data = this.controller?.db?.getLocalData?.() || [];
+        const cache = this._localActivityCache;
+        if (cache.ref === data && cache.len === data.length) return cache.map;
+        const map = {};
+        data.forEach(r => {
+            const dt = StatUtils.parseThaiDateTime(r.timestamp);
+            if (!dt || !r.machine) return;
+            const t = dt.getTime();
+            if (!map[r.machine] || map[r.machine] < t) map[r.machine] = t;
+        });
+        this._localActivityCache = { ref: data, len: data.length, map };
+        return map;
+    }
+
+    _lastActivity(machine) {
+        return Math.max(
+            Number(this.lastActivityByMachine[machine]) || 0,
+            Number(this._localActivity()[machine]) || 0,
+            Number(this.lastByMachine[machine]?.ts) || 0
+        );
+    }
+
     _machineStatus(machine, now = Date.now()) {
-        const last = this.lastByMachine[machine];
-        if (!last) return { level: 'none', last: null };
-        const elapsedMin = (now - last.ts) / 60000;
+        const last = this.lastByMachine[machine] || null;
+        const seg = WorkTime.currentSegment(now);
+        const brk = WorkTime.breakAt(now);
+
+        // เครื่องเดินอยู่ในช่วงนี้หรือไม่ ดูจากการบันทึกข้อมูล (วัดขนาดหรือตรวจสภาพภายนอก)
+        if (this._lastActivity(machine) < seg.window[0]) {
+            return { level: 'idle', reason: seg.kind === 'regular' ? 'no-production' : 'off-hours', last, brk };
+        }
+
+        // นับจากการตรวจครั้งล่าสุด หรือจากเวลาเริ่มกะ ถ้ายังไม่ได้ตรวจในกะนี้
+        const checkedThisShift = last && last.ts >= seg.anchor;
+        const from = checkedThisShift ? last.ts : seg.anchor;
+        const elapsedMin = WorkTime.workMinutes(from, now);
         const remainMin = this.intervalMin - elapsedMin;
-        if (elapsedMin > APPEARANCE_DEFAULTS.STALE_HOURS * 60) return { level: 'stale', last, elapsedMin, remainMin };
-        if (remainMin < 0) return { level: 'overdue', last, elapsedMin, remainMin };
-        if (remainMin <= APPEARANCE_DEFAULTS.SOON_MIN) return { level: 'soon', last, elapsedMin, remainMin };
-        return { level: 'ok', last, elapsedMin, remainMin };
+        const base = { last, checkedThisShift, from, elapsedMin, remainMin, brk };
+        if (remainMin < 0) return { level: 'overdue', ...base };
+        if (remainMin <= APPEARANCE_DEFAULTS.SOON_MIN) return { level: 'soon', ...base };
+        return { level: 'ok', ...base };
     }
 
     _renderStatus() {
@@ -279,27 +398,26 @@ class AppearanceModule {
             ok:      { card: 'border-green-300 bg-green-50',  dot: 'bg-green-500',  text: 'text-green-700' },
             soon:    { card: 'border-yellow-300 bg-yellow-50', dot: 'bg-yellow-400', text: 'text-yellow-700' },
             overdue: { card: 'border-red-400 bg-red-50 ring-2 ring-red-200', dot: 'bg-red-500 animate-ping', text: 'text-red-700' },
-            stale:   { card: 'border-gray-200 bg-gray-50',    dot: 'bg-gray-300',   text: 'text-gray-500' },
-            none:    { card: 'border-gray-200 bg-gray-50',    dot: 'bg-gray-300',   text: 'text-gray-500' }
+            idle:    { card: 'border-gray-200 bg-gray-50',    dot: 'bg-gray-300',   text: 'text-gray-500' }
         };
         const selected = this._currentMachine();
 
         grid.innerHTML = statuses.map(s => {
             const st = style[s.level];
             let main, sub;
-            if (s.level === 'none') {
-                main = 'ยังไม่เคยตรวจ';
-                sub = '-';
-            } else if (s.level === 'stale') {
-                main = 'ไม่ได้ตรวจนานแล้ว';
-                sub = `ล่าสุด ${this._formatDateTime(s.last.ts)}`;
-            } else if (s.level === 'overdue') {
-                main = `เลยกำหนด ${this._formatDuration(-s.remainMin)}`;
-                sub = `ล่าสุด ${this._formatTime(s.last.ts)} น.`;
+            const lastText = s.last
+                ? `ล่าสุด ${(Date.now() - s.last.ts) < 12 * 3600000 ? this._formatTime(s.last.ts) + ' น.' : this._formatDateTime(s.last.ts)}`
+                : 'ยังไม่เคยตรวจ';
+            if (s.level === 'idle') {
+                main = s.reason === 'off-hours' ? 'นอกเวลางาน' : 'ยังไม่มีการผลิต';
+                sub = lastText;
             } else {
-                main = `อีก ${this._formatDuration(s.remainMin)}`;
-                sub = `ล่าสุด ${this._formatTime(s.last.ts)} น.`;
+                main = s.level === 'overdue'
+                    ? `เลยกำหนด ${this._formatDuration(-s.remainMin)}`
+                    : `อีก ${this._formatDuration(s.remainMin)}`;
+                sub = s.checkedThisShift ? lastText : `ยังไม่ได้ตรวจกะนี้ (นับจาก ${this._formatTime(s.from)} น.)`;
             }
+            if (s.brk && s.level !== 'idle') sub = `⏸ พัก ถึง ${this._formatTime(s.brk[1])} น. · ` + sub;
             const lastFail = s.last && s.last.result === 'FAIL'
                 ? '<span class="ml-1 text-[10px] font-bold bg-red-600 text-white px-1.5 py-0.5 rounded">ครั้งล่าสุด NG</span>'
                 : '';
@@ -653,6 +771,7 @@ class AppearanceModule {
 
             const ts = Number(saved?.ts) || Date.now();
             this.lastByMachine[machine] = { ts, result, operator };
+            this.lastActivityByMachine[machine] = Math.max(Number(this.lastActivityByMachine[machine]) || 0, ts);
             if (AppConfig.USE_GOOGLE_SHEET) {
                 this.records.unshift({
                     ts,
@@ -691,28 +810,30 @@ class AppearanceModule {
         return this.records.filter(r => r.machine === machine);
     }
 
-    // นับรอบที่ควรตรวจ vs รอบที่ตรวจจริง ต่อเครื่องต่อวันผลิต (08:00–07:59)
-    // เริ่มนับจากการตรวจครั้งแรกของวันนั้น — ช่วงที่เครื่องยังไม่เดิน/วันที่เครื่องหยุดจึงไม่ถูกนับเป็นรอบที่ขาด
+    // นับรอบที่ควรตรวจ vs รอบที่ตรวจจริง ต่อเครื่อง ต่อช่วงทำงาน (เวลาปกติ / OT / กะดึก)
+    // นับเฉพาะช่วงที่เครื่องมีการตรวจ และหักเวลาพักออก — วันหยุด/ไม่มี OT จึงไม่ถูกนับเป็นรอบที่ขาด
     _coverage(records) {
-        const intervalMs = this.intervalMin * 60000;
+        const intervalMin = this.intervalMin;
+        const now = Date.now();
         const groups = {};
         records.forEach(r => {
-            const d = new Date(r.ts);
-            if (d.getHours() < 8) d.setDate(d.getDate() - 1);
-            const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0).getTime();
-            const key = `${r.machine}|${dayStart}`;
-            if (!groups[key]) groups[key] = { dayEnd: dayStart + 24 * 3600000, times: [] };
+            const dayStart = WorkTime.prodDayStart(r.ts);
+            const seg = WorkTime.segments(dayStart).find(sg => r.ts >= sg.window[0] && r.ts < sg.window[1]);
+            if (!seg) return;
+            const key = `${r.machine}|${dayStart}|${seg.kind}`;
+            if (!groups[key]) groups[key] = { seg, times: [] };
             groups[key].times.push(r.ts);
         });
         let expected = 0, covered = 0;
-        const now = Date.now();
-        Object.values(groups).forEach(g => {
-            const first = Math.min(...g.times);
-            const span = Math.max(0, Math.min(now, g.dayEnd) - first);
-            expected += Math.max(1, Math.ceil(span / intervalMs));
-            covered += new Set(g.times.map(t => Math.floor((t - first) / intervalMs))).size;
+        Object.values(groups).forEach(({ seg, times }) => {
+            const [start, end] = seg.count;
+            const slots = Math.max(1, Math.ceil(WorkTime.workMinutes(start, Math.min(now, end)) / intervalMin));
+            const hit = new Set(times.map(t =>
+                Math.min(slots - 1, Math.floor(WorkTime.workMinutes(start, Math.max(t, start)) / intervalMin))));
+            expected += slots;
+            covered += hit.size;
         });
-        return { expected, covered: Math.min(covered, expected) };
+        return { expected, covered };
     }
 
     _renderHistory() {
