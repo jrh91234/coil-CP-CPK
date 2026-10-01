@@ -437,7 +437,30 @@ class AppearanceRepository {
         checklist: checklist
       });
     }
-    return { records: records, lastByMachine: lastByMachine };
+    // เวลาบันทึกล่าสุดของแต่ละเครื่อง (วัดขนาด + ตรวจสภาพภายนอก) ใช้ดูว่าเครื่องเดินอยู่ในกะ/OT หรือไม่
+    const lastActivityByMachine = this._lastMeasurementByMachine();
+    Object.keys(lastByMachine).forEach(m => {
+      if (!lastActivityByMachine[m] || lastActivityByMachine[m] < lastByMachine[m].ts) {
+        lastActivityByMachine[m] = lastByMachine[m].ts;
+      }
+    });
+    return { records: records, lastByMachine: lastByMachine, lastActivityByMachine: lastActivityByMachine };
+  }
+
+  // อ่านเฉพาะคอลัมน์ Timestamp + Machine_ID ของชีตวัดขนาด (เบา ไม่ดึงทั้งชีต)
+  _lastMeasurementByMachine() {
+    const result = {};
+    const sheet = this.ss.getSheetByName(Config.SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return result;
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+    for (let i = 0; i < values.length; i++) {
+      const ts = (values[i][0] instanceof Date) ? values[i][0] : new Date(values[i][0]);
+      const machine = String(values[i][1] || "");
+      if (!machine || isNaN(ts.getTime())) continue;
+      const time = ts.getTime();
+      if (!result[machine] || result[machine] < time) result[machine] = time;
+    }
+    return result;
   }
 }
 
