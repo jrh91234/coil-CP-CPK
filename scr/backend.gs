@@ -16,7 +16,19 @@ const Config = {
   IMAGE_SHEET_NAME: "ItemImages",
 
   // รหัสเข้าเมนูจัดการข้อมูล ตั้งไว้ฝั่ง Cloud ไม่ฝังในหน้าเว็บ
-  SETTINGS_PASSWORD: "Cpk/cp"
+  SETTINGS_PASSWORD: "Cpk/cp",
+
+  // --- Appearance Inspection (ตรวจสภาพภายนอก) ---
+  // แท็บเก็บผลตรวจ (แยกจากข้อมูลวัดขนาด เพื่อไม่ให้ปนกับการคำนวณ Cp/Cpk)
+  APPEARANCE_SHEET_NAME: "Appearance Inspection",
+  APPEARANCE_HEADERS: ["Timestamp", "Machine_ID", "Part_ID", "Operator", "Result", "Failed_Items",
+                       "Remark", "Photo_Count", "Photo_URLs", "Photo_IDs", "Checklist_JSON"],
+  // โฟลเดอร์หลักใน Google Drive สำหรับเก็บรูป (ต้องเป็นของบัญชีที่ Deploy สคริปต์)
+  APPEARANCE_FOLDER_ID: "1f7v5VWa20ol1zQERJAKGmRmAfJEb9_MA",
+  // ค่าเริ่มต้น — แก้ได้จากแท็บ Config ใน Master Sheet (APPEARANCE_INTERVAL_MIN / APPEARANCE_CHECKLIST)
+  APPEARANCE_DEFAULT_INTERVAL_MIN: 60,
+  APPEARANCE_DEFAULT_CHECKLIST: ["บิดงอ / เสียรูป", "รอยขีดข่วนที่ตัวงาน"],
+  APPEARANCE_MAX_PHOTOS: 3
 };
 
 /**
@@ -270,6 +282,165 @@ class SheetRepository {
   }
 }
 
+// --- Appearance Photo Repository: เก็บรูปตรวจสภาพภายนอกใน Google Drive ---
+// โครงสร้างโฟลเดอร์: <โฟลเดอร์หลัก>/<yyyy-MM>/<Machine>/<yyyyMMdd_HHmmss>_<Machine>_<Part>_<ผล>_<ลำดับ>.jpg
+class AppearancePhotoRepository {
+  _rootFolder() {
+    return DriveApp.getFolderById(Config.APPEARANCE_FOLDER_ID);
+  }
+
+  _getOrCreateSubFolder(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : parent.createFolder(name);
+  }
+
+  // ใช้ lock กันสองเครื่องอัปโหลดพร้อมกันแล้วสร้างโฟลเดอร์เดือน/เครื่องซ้ำ
+  _targetFolder(machine, now) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    try {
+      const month = Utilities.formatDate(now, "Asia/Bangkok", "yyyy-MM");
+      const monthFolder = this._getOrCreateSubFolder(this._rootFolder(), month);
+      return this._getOrCreateSubFolder(monthFolder, AppearancePhotoRepository.safeName(machine) || "Unknown");
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  static safeName(text) {
+    return String(text || "").replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, "").trim();
+  }
+
+  save(payload) {
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(payload.dataUrl || ""));
+    if (!match) throw new Error("รูปแบบรูปภาพไม่ถูกต้อง");
+
+    const now = new Date();
+    const folder = this._targetFolder(payload.machine, now);
+    const stamp = Utilities.formatDate(now, "Asia/Bangkok", "yyyyMMdd_HHmmss");
+    const safe = AppearancePhotoRepository.safeName;
+    const fileName = [stamp, safe(payload.machine), safe(payload.part), safe(payload.result), String(payload.index || 1)]
+      .filter(Boolean).join("_") + ".jpg";
+
+    const blob = Utilities.newBlob(Utilities.base64Decode(match[2]), match[1], fileName);
+    const file = folder.createFile(blob);
+    file.setDescription([
+      "Appearance Inspection",
+      "Machine: " + (payload.machine || ""),
+      "Part: " + (payload.part || ""),
+      "Operator: " + (payload.operator || ""),
+      "Result: " + (payload.result || "")
+    ].join("\n"));
+
+    // โฟลเดอร์หลักตั้ง "ทุกคนที่มีลิงก์ดูได้" ไว้แล้ว ตั้งซ้ำที่ไฟล์เผื่อการสืบทอดสิทธิ์ไม่ทำงาน
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (err) {
+      // บาง Workspace ห้ามแชร์สาธารณะ — ไฟล์ยังถูกบันทึกอยู่ แค่หน้าเว็บอาจแสดงรูปย่อไม่ได้
+    }
+
+    const id = file.getId();
+    return { id: id, url: "https://drive.google.com/file/d/" + id + "/view", name: fileName };
+  }
+}
+
+// --- Appearance Repository: เก็บผลตรวจสภาพภายนอก ---
+class AppearanceRepository {
+  constructor(ss) {
+    this.ss = ss;
+  }
+
+  _getSheet() {
+    let sheet = this.ss.getSheetByName(Config.APPEARANCE_SHEET_NAME);
+    if (!sheet) {
+      sheet = this.ss.insertSheet(Config.APPEARANCE_SHEET_NAME);
+      sheet.appendRow(Config.APPEARANCE_HEADERS);
+      sheet.getRange(1, 1, 1, Config.APPEARANCE_HEADERS.length).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
+      sheet.setFrozenRows(1);
+    }
+    return sheet;
+  }
+
+  addRecord(data) {
+    const photos = Array.isArray(data.photos) ? data.photos.filter(p => p && p.id) : [];
+    if (photos.length < 1) throw new Error("ต้องแนบรูปอย่างน้อย 1 รูป");
+    if (photos.length > Config.APPEARANCE_MAX_PHOTOS) throw new Error("แนบรูปได้สูงสุด " + Config.APPEARANCE_MAX_PHOTOS + " รูป");
+    if (!data.machine) throw new Error("ไม่ได้เลือกเครื่องจักร");
+
+    const checklist = Array.isArray(data.checklist) ? data.checklist : [];
+    if (checklist.length === 0 || checklist.some(c => c.result !== "PASS" && c.result !== "FAIL")) {
+      throw new Error("ผลตรวจรายข้อไม่ครบ");
+    }
+    const failed = checklist.filter(c => c.result === "FAIL").map(c => c.label);
+    const result = failed.length > 0 ? "FAIL" : "PASS";
+    if (result === "FAIL" && !String(data.remark || "").trim()) {
+      throw new Error("ผลไม่ผ่าน ต้องกรอกหมายเหตุ");
+    }
+
+    const timestamp = new Date();
+    this._getSheet().appendRow([
+      timestamp,
+      data.machine,
+      data.part || "",
+      data.operator || "",
+      result,
+      failed.join(", "),
+      String(data.remark || "").trim(),
+      photos.length,
+      photos.map(p => p.url || ("https://drive.google.com/file/d/" + p.id + "/view")).join("\n"),
+      photos.map(p => p.id).join("\n"),
+      JSON.stringify(checklist.map(c => ({ label: String(c.label), result: c.result })))
+    ]);
+    return { timestamp: ResponseHelper.formatDate(timestamp), ts: timestamp.getTime(), result: result };
+  }
+
+  /**
+   * records    = ผลตรวจในช่วงวันที่ที่ขอ (range = { from, to } รูปแบบ YYYY-MM-DD)
+   * lastByMachine = ผลตรวจล่าสุดของทุกเครื่อง (ไม่สนช่วงวันที่) ใช้คำนวณว่าเครื่องไหนถึงรอบตรวจ
+   */
+  getRecords(range) {
+    const sheet = this._getSheet();
+    const values = sheet.getDataRange().getValues();
+    const start = range ? DateRange.start(range.from) : null;
+    const end   = range ? DateRange.end(range.to)     : null;
+
+    const records = [];
+    const lastByMachine = {};
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const ts = (row[0] instanceof Date) ? row[0] : new Date(row[0]);
+      if (!(ts instanceof Date) || isNaN(ts.getTime())) continue;
+      const time = ts.getTime();
+      const machine = String(row[1] || "");
+
+      if (machine && (!lastByMachine[machine] || lastByMachine[machine].ts < time)) {
+        lastByMachine[machine] = { ts: time, result: String(row[4] || ""), operator: String(row[3] || "") };
+      }
+
+      if (start && ts < start) continue;
+      if (end && ts > end) continue;
+
+      let checklist = [];
+      try { checklist = JSON.parse(row[10] || "[]"); } catch (err) { checklist = []; }
+
+      records.push({
+        rowNumber: i + 1,
+        timestamp: ResponseHelper.formatDate(ts),
+        ts: time,
+        machine: machine,
+        part: String(row[2] || ""),
+        operator: String(row[3] || ""),
+        result: String(row[4] || ""),
+        failedItems: String(row[5] || ""),
+        remark: String(row[6] || ""),
+        photoIds: String(row[9] || "").split(/\s+/).filter(Boolean),
+        checklist: checklist
+      });
+    }
+    return { records: records, lastByMachine: lastByMachine };
+  }
+}
+
 /**
  * =========================================================================
  * MODULE 4: CONTROLLERS (API Entry Points)
@@ -310,6 +481,16 @@ function doPost(e) {
       return ResponseHelper.success({ url: saved.dataUrl, version: saved.version });
     }
 
+    if (postData.action === "upload_appearance_photo") {
+      const photoRepo = new AppearancePhotoRepository();
+      return ResponseHelper.success(photoRepo.save(postData.data || {}));
+    }
+
+    if (postData.action === "add_appearance") {
+      const appearanceRepo = new AppearanceRepository(ss);
+      return ResponseHelper.success(appearanceRepo.addRecord(postData.data || {}), "Appearance saved");
+    }
+
     if (postData.action === "delete_image") {
       const imgRepo = new ImageRepository(ss);
       imgRepo.delete(postData.itemKey);
@@ -322,9 +503,11 @@ function doPost(e) {
   }
 }
 
+// กดรันฟังก์ชันนี้ 1 ครั้งใน Apps Script Editor เพื่อให้สิทธิ์ Sheets + Drive
 function authorizeApp() {
   SpreadsheetApp.getActiveSpreadsheet();
-  Logger.log('✅ Authorization complete — Sheets permissions granted.');
+  const folder = DriveApp.getFolderById(Config.APPEARANCE_FOLDER_ID);
+  Logger.log('✅ Authorization complete — Sheets + Drive permissions granted. Photo folder: ' + folder.getName());
 }
 
 function doGet(e) {
@@ -357,6 +540,16 @@ function doGet(e) {
     }
 
     // ----------------------------------------------------
+    // ผลตรวจสภาพภายนอก (Appearance) — ส่ง from/to (YYYY-MM-DD) เพื่อกรองช่วงวันที่ได้
+    // ----------------------------------------------------
+    if (e.parameter && e.parameter.action === "get_appearance") {
+      const appearanceRepo = new AppearanceRepository(ss);
+      const from = e.parameter.from || "";
+      const to = e.parameter.to || "";
+      return ResponseHelper.success(appearanceRepo.getRecords((from || to) ? { from: from, to: to } : null));
+    }
+
+    // ----------------------------------------------------
     // ดึงข้อมูล Master Data (พนักงาน & จับคู่เครื่องจักร) จากแท็บ "Config"
     // ----------------------------------------------------
     if (e.parameter && e.parameter.action === "get_master") {
@@ -365,6 +558,8 @@ function doGet(e) {
       
       let operators = [];
       let machineAssignments = {};
+      let appearanceIntervalMin = Config.APPEARANCE_DEFAULT_INTERVAL_MIN;
+      let appearanceChecklist = Config.APPEARANCE_DEFAULT_CHECKLIST;
       
       if (configSheet) {
         const data = configSheet.getDataRange().getValues();
@@ -382,13 +577,32 @@ function doGet(e) {
               // กรณี JSON พัง ให้ทำการแยกคำด้วยลูกน้ำแทน
               operators = val.replace(/[\[\]"]/g, '').split(',').map(s => s.trim());
             }
+          } else if (key === "APPEARANCE_INTERVAL_MIN") {
+            // ความถี่ตรวจสภาพภายนอก (นาที) เช่น 60
+            const minutes = Number(val);
+            if (minutes > 0) appearanceIntervalMin = minutes;
+          } else if (key === "APPEARANCE_CHECKLIST") {
+            // หัวข้อตรวจสภาพภายนอก: JSON array หรือคั่นด้วยลูกน้ำ
+            let items = [];
+            try {
+              items = JSON.parse(val);
+            } catch(err) {
+              items = val.replace(/[\[\]"]/g, '').split(',');
+            }
+            items = (Array.isArray(items) ? items : []).map(s => String(s).trim()).filter(Boolean);
+            if (items.length > 0) appearanceChecklist = items;
           } else if (key.startsWith("Machine_")) {
             // จับคู่เครื่องจักร -> รุ่นชิ้นงาน
             machineAssignments[key] = val;
           }
         }
       }
-      return ResponseHelper.success({ operators: operators, machineAssignments: machineAssignments });
+      return ResponseHelper.success({
+        operators: operators,
+        machineAssignments: machineAssignments,
+        appearanceIntervalMin: appearanceIntervalMin,
+        appearanceChecklist: appearanceChecklist
+      });
     }
 
     // ----------------------------------------------------
