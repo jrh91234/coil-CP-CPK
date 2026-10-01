@@ -2261,6 +2261,12 @@ class AppController {
         this.ui.populateMachines(this.machineAssignments);
         this.ui.populateParts(PART_SPECS);
 
+        // ตรวจสภาพภายนอก (Appearance) — module แยกใน js/appearance.js
+        if (typeof AppearanceModule !== 'undefined') {
+            this.appearance = new AppearanceModule(this);
+            this.appearance.init(masterData);
+        }
+
         this._initializing = true;
         if (Object.keys(this.machineAssignments).length > 0) {
             this.ui.elements.machineSelect.selectedIndex = 1;
@@ -2783,6 +2789,11 @@ class AppController {
     async handleSubmit(e) {
         e.preventDefault();
 
+        if (this.appearance?.mode === 'appearance') {
+            await this.appearance.submit();
+            return;
+        }
+
         const part = this.ui.elements.partSelect.value;
         const param = this.ui.elements.paramSelect.value;
         const spec = PART_SPECS[part]?.[param];
@@ -2890,6 +2901,8 @@ class AppController {
         }, 100);
 
         const range = this._getDateRange();
+        // ผลตรวจสภาพภายนอกใช้ช่วงวันที่เดียวกัน (module โหลดใหม่เองเฉพาะเมื่อช่วงเปลี่ยน)
+        this.appearance?.onRangeChange(range);
         // ใช้ cache ได้เฉพาะเมื่อช่วงวันที่ยังเป็นช่วงเดิม — เปลี่ยนช่วงเมื่อไหร่ต้องดึงจาก server ใหม่
         const canUseCache = useLocalCache && this.db.getLocalData && this.loadedRangeKey === range.key;
 

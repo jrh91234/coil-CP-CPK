@@ -1,0 +1,1005 @@
+// =====================================================
+// APPEARANCE INSPECTION (ตรวจสภาพภายนอก)
+// ตรวจบิดงอ/เสียรูป, รอยขีดข่วน ฯลฯ ตามรอบเวลา + บังคับแนบรูป (เก็บใน Google Drive)
+// แยกจาก PART_SPECS / Cp-Cpk ทั้งหมด เพื่อไม่ให้กระทบการคำนวณเดิม
+// =====================================================
+
+const APPEARANCE_DEFAULTS = {
+    INTERVAL_MIN: 60,                                   // แก้ได้จาก Config: APPEARANCE_INTERVAL_MIN
+    CHECKLIST: ['บิดงอ / เสียรูป', 'รอยขีดข่วนที่ตัวงาน'], // แก้ได้จาก Config: APPEARANCE_CHECKLIST
+    MIN_PHOTOS: 1,
+    MAX_PHOTOS: 3,
+    PHOTO_MAX_SIDE: 1920,     // ขนาดปกติ (ด้านยาวสุด px)
+    PHOTO_QUALITY: 0.85,
+    SOON_MIN: 10,             // เหลือน้อยกว่านี้ (นาที) = ใกล้ถึงรอบ
+    STALE_HOURS: 12,          // ไม่ได้ตรวจนานกว่านี้ถือว่าเครื่องน่าจะหยุด — ไม่นับเป็น "เลยกำหนด"
+    RENDER_TICK_MS: 30 * 1000,
+    SERVER_POLL_MS: 3 * 60 * 1000,
+    HISTORY_PAGE: 12
+};
+
+// ---------- Data service ----------
+class AppearanceService {
+    constructor(url, useCloud) {
+        this.url = url;
+        this.useCloud = useCloud;
+        this._memRecords = [];      // โหมดทดสอบ (In-Memory)
+    }
+
+    async _post(action, data) {
+        const res = await fetch(this.url, {
+            method: 'POST',
+            body: JSON.stringify({ action, data }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'เกิดข้อผิดพลาดจาก server');
+        return json.data;
+    }
+
+    async uploadPhoto(payload) {
+        if (!this.useCloud) {
+            return { id: `local-${Date.now()}-${payload.index}`, url: payload.dataUrl, name: 'local.jpg' };
+        }
+        return this._post('upload_appearance_photo', payload);
+    }
+
+    async addRecord(record) {
+        if (!this.useCloud) {
+            const ts = Date.now();
+            const failed = record.checklist.filter(c => c.result === 'FAIL').map(c => c.label);
+            this._memRecords.push({
+                ...record,
+                ts,
+                timestamp: new Date(ts).toLocaleString('th-TH', { hour12: false }),
+                result: failed.length ? 'FAIL' : 'PASS',
+                failedItems: failed.join(', '),
+                photoIds: record.photos.map(p => p.id)
+            });
+            return { ts, result: failed.length ? 'FAIL' : 'PASS' };
+        }
+        return this._post('add_appearance', record);
+    }
+
+    async getRecords(range) {
+        if (!this.useCloud) {
+            const lastByMachine = {};
+            this._memRecords.forEach(r => {
+                if (!lastByMachine[r.machine] || lastByMachine[r.machine].ts < r.ts) {
+                    lastByMachine[r.machine] = { ts: r.ts, result: r.result, operator: r.operator };
+                }
+            });
+            return { records: [...this._memRecords], lastByMachine };
+        }
+        const params = new URLSearchParams({ action: 'get_appearance' });
+        if (range?.from) params.set('from', range.from);
+        if (range?.to) params.set('to', range.to);
+        const res = await fetch(`${this.url}?${params.toString()}`);
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'โหลดข้อมูลตรวจสภาพภายนอกไม่สำเร็จ');
+        return json.data || { records: [], lastByMachine: {} };
+    }
+}
+
+// ---------- Module (UI + logic) ----------
+class AppearanceModule {
+    constructor(controller) {
+        this.controller = controller;
+        this.service = new AppearanceService(AppConfig.GOOGLE_SHEET_URL, AppConfig.USE_GOOGLE_SHEET);
+        this.mode = 'measure';
+        this.intervalMin = APPEARANCE_DEFAULTS.INTERVAL_MIN;
+        this.checklist = [...APPEARANCE_DEFAULTS.CHECKLIST];
+        this.machines = [];
+        this.results = [];          // 'PASS' | 'FAIL' | '' ต่อข้อ
+        this.photos = [];           // { dataUrl, uploaded: { id, url, sig } | null }
+        this.records = [];
+        this.lastByMachine = {};
+        this.rangeKey = null;
+        this.range = { from: '', to: '' };
+        this.historyLimit = APPEARANCE_DEFAULTS.HISTORY_PAGE;
+        this.historyAllMachines = false;
+        this.localThumbs = {};      // fileId → dataUrl (แสดงทันทีระหว่างรอ Drive สร้าง thumbnail)
+        this.isSubmitting = false;
+        this.isProcessingPhoto = false;
+        this.chart = null;
+        this.baseTitle = document.title;
+        this.loadError = '';
+    }
+
+    // ===== Lifecycle =====
+
+    init(masterData) {
+        const interval = Number(masterData?.appearanceIntervalMin);
+        if (interval > 0) this.intervalMin = interval;
+        if (Array.isArray(masterData?.appearanceChecklist) && masterData.appearanceChecklist.length) {
+            this.checklist = masterData.appearanceChecklist.map(s => String(s).trim()).filter(Boolean);
+        }
+        this.machines = Object.keys(masterData?.machineAssignments || {}).sort();
+        this.results = this.checklist.map(() => '');
+
+        this._renderFormSection();
+        this._bindEvents();
+        this._renderStatus();
+        this._updateFormValidity();
+
+        setInterval(() => this._renderStatus(), APPEARANCE_DEFAULTS.RENDER_TICK_MS);
+        setInterval(() => {
+            if (document.visibilityState === 'visible') this.reload(true);
+        }, APPEARANCE_DEFAULTS.SERVER_POLL_MS);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') this.reload(true);
+        });
+    }
+
+    // เรียกจาก AppController ทุกครั้งที่ dashboard refresh — โหลดใหม่เฉพาะเมื่อช่วงวันที่เปลี่ยน
+    onRangeChange(range) {
+        if (range.key === this.rangeKey) return;
+        this.range = { from: range.from, to: range.to };
+        this.rangeKey = range.key;
+        this.historyLimit = APPEARANCE_DEFAULTS.HISTORY_PAGE;
+        this.reload(false);
+    }
+
+    async reload(silent) {
+        const key = this.rangeKey;
+        if (!silent) this._setHistoryLoading(true);
+        try {
+            const data = await this.service.getRecords(this.range);
+            if (key !== this.rangeKey) return; // ผู้ใช้เปลี่ยนช่วงวันที่ระหว่างโหลด
+            this.records = (data.records || []).sort((a, b) => b.ts - a.ts);
+            this.lastByMachine = data.lastByMachine || {};
+            this.loadError = '';
+        } catch (err) {
+            console.error('Appearance load error:', err);
+            this.loadError = 'โหลดข้อมูลตรวจสภาพภายนอกไม่สำเร็จ — ตรวจสอบว่า Deploy backend เวอร์ชันใหม่แล้ว';
+        } finally {
+            if (!silent) this._setHistoryLoading(false);
+            this._renderStatus();
+            this._renderHistory();
+        }
+    }
+
+    // ===== Helpers =====
+
+    _esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    }
+
+    _shortMachine(machine) {
+        return String(machine || '').replace(/^Machine_/i, '');
+    }
+
+    _formatDuration(minutes) {
+        const m = Math.max(0, Math.round(minutes));
+        if (m < 60) return `${m} นาที`;
+        const h = Math.floor(m / 60);
+        const r = m % 60;
+        return r ? `${h} ชม. ${r} นาที` : `${h} ชม.`;
+    }
+
+    _formatTime(ts) {
+        const d = new Date(ts);
+        const p = n => String(n).padStart(2, '0');
+        return `${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    _formatDateTime(ts) {
+        const d = new Date(ts);
+        const p = n => String(n).padStart(2, '0');
+        return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    _thumbUrl(id, size = 400) {
+        if (this.localThumbs[id]) return this.localThumbs[id];
+        return `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w${size}`;
+    }
+
+    _driveUrl(id) {
+        if (this.localThumbs[id] && String(id).startsWith('local-')) return this.localThumbs[id];
+        return `https://drive.google.com/file/d/${encodeURIComponent(id)}/view`;
+    }
+
+    _currentMachine() {
+        return document.getElementById('machine-id')?.value || '';
+    }
+
+    _toast(message, kind = 'success') {
+        const el = document.createElement('div');
+        const color = kind === 'success' ? 'bg-green-600' : kind === 'error' ? 'bg-red-600' : 'bg-gray-800';
+        el.className = `fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] ${color} text-white text-sm font-semibold px-5 py-3 rounded-xl shadow-2xl transition-opacity duration-300`;
+        el.textContent = message;
+        document.body.appendChild(el);
+        setTimeout(() => { el.style.opacity = '0'; }, 2600);
+        setTimeout(() => el.remove(), 3000);
+    }
+
+    // ===== Status (รอบตรวจ) =====
+
+    _machineStatus(machine, now = Date.now()) {
+        const last = this.lastByMachine[machine];
+        if (!last) return { level: 'none', last: null };
+        const elapsedMin = (now - last.ts) / 60000;
+        const remainMin = this.intervalMin - elapsedMin;
+        if (elapsedMin > APPEARANCE_DEFAULTS.STALE_HOURS * 60) return { level: 'stale', last, elapsedMin, remainMin };
+        if (remainMin < 0) return { level: 'overdue', last, elapsedMin, remainMin };
+        if (remainMin <= APPEARANCE_DEFAULTS.SOON_MIN) return { level: 'soon', last, elapsedMin, remainMin };
+        return { level: 'ok', last, elapsedMin, remainMin };
+    }
+
+    _renderStatus() {
+        const now = Date.now();
+        const statuses = this.machines.map(m => ({ machine: m, ...this._machineStatus(m, now) }));
+        const overdue = statuses.filter(s => s.level === 'overdue');
+
+        // ป้ายบอกจำนวนบนแท็บ + title ของหน้าเว็บ
+        const badge = document.getElementById('appearance-tab-badge');
+        if (badge) {
+            badge.textContent = String(overdue.length);
+            badge.classList.toggle('hidden', overdue.length === 0);
+        }
+        document.title = overdue.length ? `(⚠${overdue.length}) ${this.baseTitle}` : this.baseTitle;
+
+        const intervalEl = document.getElementById('appearance-interval-label');
+        if (intervalEl) intervalEl.textContent = `ทุก ${this._formatDuration(this.intervalMin)}`;
+
+        // แบนเนอร์ในฟอร์ม (สำคัญบนมือถือ ที่แผงสถานะอยู่ด้านล่าง)
+        const banner = document.getElementById('appearance-due-banner');
+        if (banner) {
+            if (overdue.length && this.mode === 'measure') {
+                const worst = [...overdue].sort((a, b) => a.remainMin - b.remainMin)[0];
+                const others = overdue.length > 1 ? ` และอีก ${overdue.length - 1} เครื่อง` : '';
+                banner.innerHTML = `
+                    <div class="flex items-center gap-3 bg-red-50 border border-red-300 text-red-800 rounded-lg px-3 py-2 animate-pulse">
+                        <span class="text-lg">⚠️</span>
+                        <div class="flex-1 text-xs leading-snug">
+                            <b>ถึงรอบตรวจสภาพภายนอก</b><br>
+                            ${this._esc(this._shortMachine(worst.machine))} เลยกำหนด ${this._formatDuration(-worst.remainMin)}${others}
+                        </div>
+                        <button type="button" data-appearance-goto="${this._esc(worst.machine)}"
+                            class="shrink-0 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg">ตรวจเลย</button>
+                    </div>`;
+                banner.classList.remove('hidden');
+            } else {
+                banner.classList.add('hidden');
+                banner.innerHTML = '';
+            }
+        }
+
+        const grid = document.getElementById('appearance-status-grid');
+        if (!grid) return;
+
+        if (this.machines.length === 0) {
+            grid.innerHTML = '<p class="col-span-full text-xs text-gray-400 text-center py-4">ยังไม่มีรายชื่อเครื่องจักรจาก Config</p>';
+            return;
+        }
+
+        const style = {
+            ok:      { card: 'border-green-300 bg-green-50',  dot: 'bg-green-500',  text: 'text-green-700' },
+            soon:    { card: 'border-yellow-300 bg-yellow-50', dot: 'bg-yellow-400', text: 'text-yellow-700' },
+            overdue: { card: 'border-red-400 bg-red-50 ring-2 ring-red-200', dot: 'bg-red-500 animate-ping', text: 'text-red-700' },
+            stale:   { card: 'border-gray-200 bg-gray-50',    dot: 'bg-gray-300',   text: 'text-gray-500' },
+            none:    { card: 'border-gray-200 bg-gray-50',    dot: 'bg-gray-300',   text: 'text-gray-500' }
+        };
+        const selected = this._currentMachine();
+
+        grid.innerHTML = statuses.map(s => {
+            const st = style[s.level];
+            let main, sub;
+            if (s.level === 'none') {
+                main = 'ยังไม่เคยตรวจ';
+                sub = '-';
+            } else if (s.level === 'stale') {
+                main = 'ไม่ได้ตรวจนานแล้ว';
+                sub = `ล่าสุด ${this._formatDateTime(s.last.ts)}`;
+            } else if (s.level === 'overdue') {
+                main = `เลยกำหนด ${this._formatDuration(-s.remainMin)}`;
+                sub = `ล่าสุด ${this._formatTime(s.last.ts)} น.`;
+            } else {
+                main = `อีก ${this._formatDuration(s.remainMin)}`;
+                sub = `ล่าสุด ${this._formatTime(s.last.ts)} น.`;
+            }
+            const lastFail = s.last && s.last.result === 'FAIL'
+                ? '<span class="ml-1 text-[10px] font-bold bg-red-600 text-white px-1.5 py-0.5 rounded">ครั้งล่าสุด NG</span>'
+                : '';
+            const isSel = s.machine === selected ? 'outline outline-2 outline-blue-500' : '';
+            return `
+                <button type="button" data-appearance-goto="${this._esc(s.machine)}" title="${this._esc(s.machine)}"
+                    class="text-left border rounded-lg px-3 py-2 hover:shadow-md transition-shadow ${st.card} ${isSel}">
+                    <div class="flex items-center gap-1.5">
+                        <span class="relative inline-flex h-2.5 w-2.5"><span class="absolute inline-flex h-full w-full rounded-full ${st.dot}"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 ${st.dot.replace(' animate-ping', '')}"></span></span>
+                        <span class="text-xs font-bold text-gray-700 truncate">${this._esc(this._shortMachine(s.machine))}</span>
+                        ${lastFail}
+                    </div>
+                    <p class="text-sm font-bold mt-1 ${st.text}">${main}</p>
+                    <p class="text-[11px] text-gray-500">${sub}</p>
+                </button>`;
+        }).join('');
+    }
+
+    // ===== Form =====
+
+    _renderFormSection() {
+        const section = document.getElementById('appearance-input-section');
+        if (!section) return;
+        section.innerHTML = `
+            <div class="flex items-center justify-between mb-2">
+                <label class="block text-sm font-medium text-gray-600">ผลการตรวจสภาพภายนอก</label>
+                <button type="button" id="appearance-all-pass" class="text-xs font-bold text-green-700 hover:text-green-800 border border-green-300 hover:bg-green-50 rounded-full px-3 py-1 transition-colors">✓ ผ่านทุกข้อ</button>
+            </div>
+            <div id="appearance-checklist" class="space-y-2.5"></div>
+
+            <div class="mt-4">
+                <div class="flex items-center justify-between mb-1">
+                    <label class="block text-sm font-medium text-gray-600">รูปถ่ายชิ้นงาน <span class="text-red-500">*</span></label>
+                    <span id="appearance-photo-count" class="text-xs font-semibold text-gray-500"></span>
+                </div>
+                <div id="appearance-photo-grid" class="grid grid-cols-3 gap-2"></div>
+                <div class="grid grid-cols-2 gap-2 mt-2">
+                    <label id="appearance-camera-btn" class="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-colors select-none">
+                        📷 ถ่ายรูป
+                        <input type="file" accept="image/*" capture="environment" id="appearance-camera-input" class="hidden">
+                    </label>
+                    <label id="appearance-gallery-btn" class="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-blue-600 text-blue-700 hover:bg-blue-50 text-sm font-bold transition-colors select-none">
+                        🖼️ เลือกรูป
+                        <input type="file" accept="image/*" multiple id="appearance-gallery-input" class="hidden">
+                    </label>
+                </div>
+                <p class="text-[11px] text-gray-400 mt-1">ต้องมีอย่างน้อย ${APPEARANCE_DEFAULTS.MIN_PHOTOS} รูป สูงสุด ${APPEARANCE_DEFAULTS.MAX_PHOTOS} รูป · ระบบประทับเวลา/เครื่อง/ผู้ตรวจลงบนรูปให้อัตโนมัติ</p>
+            </div>
+
+            <div class="mt-4">
+                <label for="appearance-remark" class="block text-sm font-medium text-gray-600 mb-1">หมายเหตุ <span id="appearance-remark-required" class="hidden text-red-500">* (จำเป็นเมื่อไม่ผ่าน)</span></label>
+                <textarea id="appearance-remark" rows="2" class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500" placeholder="เช่น พบชิ้นงานบิดงอ 2 ชิ้น แจ้งหัวหน้างานแล้ว"></textarea>
+            </div>
+
+            <ul id="appearance-missing" class="mt-3 text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 space-y-0.5"></ul>
+        `;
+        this._renderChecklist();
+        this._renderPhotos();
+    }
+
+    _renderChecklist() {
+        const wrap = document.getElementById('appearance-checklist');
+        if (!wrap) return;
+        const base = 'flex-1 py-2 px-3 rounded-lg border-2 font-bold text-sm transition-colors';
+        wrap.innerHTML = this.checklist.map((label, i) => {
+            const r = this.results[i];
+            const passCls = r === 'PASS'
+                ? 'border-green-500 bg-green-50 text-green-700'
+                : 'border-gray-300 text-gray-500 hover:border-green-500 hover:text-green-600 hover:bg-green-50';
+            const failCls = r === 'FAIL'
+                ? 'border-red-500 bg-red-50 text-red-700'
+                : 'border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50';
+            return `
+                <div data-appearance-row="${i}">
+                    <p class="text-xs font-semibold text-gray-700 mb-1">${i + 1}. ${this._esc(label)}</p>
+                    <div class="flex items-center gap-2">
+                        <button type="button" data-appearance-result="PASS" class="${base} ${passCls}">✓ ผ่าน</button>
+                        <button type="button" data-appearance-result="FAIL" class="${base} ${failCls}">✗ ไม่ผ่าน</button>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    _renderPhotos() {
+        const grid = document.getElementById('appearance-photo-grid');
+        if (!grid) return;
+        const slots = [];
+        for (let i = 0; i < APPEARANCE_DEFAULTS.MAX_PHOTOS; i++) {
+            const p = this.photos[i];
+            if (p) {
+                slots.push(`
+                    <div class="relative aspect-square rounded-lg overflow-hidden border-2 ${p.uploaded ? 'border-green-400' : 'border-blue-300'} bg-gray-100">
+                        <img src="${p.dataUrl}" alt="รูปที่ ${i + 1}" data-appearance-preview="${i}" class="w-full h-full object-cover cursor-zoom-in">
+                        <span class="absolute top-1 left-1 text-[10px] font-bold bg-black/60 text-white px-1.5 rounded">${i + 1}</span>
+                        ${p.uploaded ? '<span class="absolute bottom-1 left-1 text-[10px] font-bold bg-green-600 text-white px-1.5 rounded">☁ อัปแล้ว</span>' : ''}
+                        <button type="button" data-appearance-remove="${i}" title="ลบรูป"
+                            class="absolute top-1 right-1 h-6 w-6 rounded-full bg-black/60 hover:bg-red-600 text-white text-sm leading-none flex items-center justify-center">&times;</button>
+                    </div>`);
+            } else if (i === this.photos.length && this.isProcessingPhoto) {
+                slots.push(`
+                    <div class="aspect-square rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 flex flex-col items-center justify-center text-blue-500 text-[11px]">
+                        <svg class="h-5 w-5 animate-spin mb-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>
+                        กำลังเตรียมรูป
+                    </div>`);
+            } else {
+                const required = i < APPEARANCE_DEFAULTS.MIN_PHOTOS;
+                slots.push(`
+                    <label class="cursor-pointer aspect-square rounded-lg border-2 border-dashed ${required ? 'border-red-300 bg-red-50/40 text-red-400' : 'border-gray-300 bg-gray-50 text-gray-400'} hover:border-blue-400 hover:text-blue-500 flex flex-col items-center justify-center text-[11px] transition-colors">
+                        <span class="text-xl leading-none">＋</span>
+                        <span>${required ? 'จำเป็น' : 'ไม่บังคับ'}</span>
+                        <input type="file" accept="image/*" capture="environment" class="appearance-slot-input hidden">
+                    </label>`);
+            }
+        }
+        grid.innerHTML = slots.join('');
+
+        const countEl = document.getElementById('appearance-photo-count');
+        if (countEl) {
+            const n = this.photos.length;
+            countEl.textContent = `${n}/${APPEARANCE_DEFAULTS.MAX_PHOTOS} รูป`;
+            countEl.className = `text-xs font-semibold ${n >= APPEARANCE_DEFAULTS.MIN_PHOTOS ? 'text-green-600' : 'text-red-500'}`;
+        }
+        const full = this.photos.length >= APPEARANCE_DEFAULTS.MAX_PHOTOS || this.isProcessingPhoto;
+        ['appearance-camera-btn', 'appearance-gallery-btn'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.classList.toggle('opacity-40', full);
+            el.classList.toggle('pointer-events-none', full);
+        });
+    }
+
+    _missingItems() {
+        const missing = [];
+        if (!this._currentMachine()) missing.push('เลือกกระบวนการ/เครื่องจักร');
+        if (!document.getElementById('operator')?.value) missing.push('เลือกพนักงาน');
+        const unanswered = this.results.map((r, i) => r ? null : i + 1).filter(Boolean);
+        if (unanswered.length) missing.push(`เลือกผลตรวจข้อ ${unanswered.join(', ')}`);
+        if (this.photos.length < APPEARANCE_DEFAULTS.MIN_PHOTOS) missing.push(`แนบรูปอย่างน้อย ${APPEARANCE_DEFAULTS.MIN_PHOTOS} รูป`);
+        if (this.results.includes('FAIL') && !document.getElementById('appearance-remark')?.value.trim()) {
+            missing.push('กรอกหมายเหตุ (มีข้อที่ไม่ผ่าน)');
+        }
+        if (this.isProcessingPhoto) missing.push('รอเตรียมรูปให้เสร็จ');
+        return missing;
+    }
+
+    _updateFormValidity() {
+        const hasFail = this.results.includes('FAIL');
+        document.getElementById('appearance-remark-required')?.classList.toggle('hidden', !hasFail);
+        const remark = document.getElementById('appearance-remark');
+        if (remark) remark.classList.toggle('border-red-400', hasFail && !remark.value.trim());
+
+        if (this.mode !== 'appearance') return;
+
+        const missing = this._missingItems();
+        const list = document.getElementById('appearance-missing');
+        if (list) {
+            list.innerHTML = missing.map(m => `<li>• ${this._esc(m)}</li>`).join('');
+            list.classList.toggle('hidden', missing.length === 0);
+        }
+        if (!this.isSubmitting) {
+            const btn = document.getElementById('submit-btn');
+            if (btn) {
+                btn.disabled = missing.length > 0;
+                btn.classList.toggle('opacity-50', missing.length > 0);
+                btn.classList.toggle('cursor-not-allowed', missing.length > 0);
+                btn.innerText = hasFail ? 'บันทึกผลตรวจ (พบปัญหา ✗)' : 'บันทึกผลตรวจสภาพภายนอก';
+            }
+        }
+    }
+
+    setMode(mode) {
+        this.mode = mode;
+        const isAppearance = mode === 'appearance';
+        document.querySelectorAll('.measure-only').forEach(el => el.classList.toggle('hidden', isAppearance));
+        document.getElementById('appearance-input-section')?.classList.toggle('hidden', !isAppearance);
+
+        document.querySelectorAll('[data-entry-mode]').forEach(tab => {
+            const active = tab.dataset.entryMode === mode;
+            tab.classList.toggle('bg-white', active);
+            tab.classList.toggle('shadow', active);
+            tab.classList.toggle('text-blue-700', active);
+            tab.classList.toggle('text-gray-500', !active);
+        });
+
+        const title = document.getElementById('entry-title');
+        if (title) title.textContent = isAppearance ? 'ตรวจสภาพภายนอก (Appearance)' : 'บันทึกข้อมูลการวัด (Data Entry)';
+
+        const btn = document.getElementById('submit-btn');
+        if (btn && !isAppearance) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            btn.innerText = 'บันทึกข้อมูล (Save)';
+        }
+        this._updateFormValidity();
+        this._renderStatus();
+    }
+
+    gotoMachine(machine) {
+        const select = document.getElementById('machine-id');
+        if (select && machine && select.value !== machine) {
+            select.value = machine;
+            select.dispatchEvent(new Event('change'));
+        }
+        this.setMode('appearance');
+        document.getElementById('entry-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    _resetForm() {
+        this.results = this.checklist.map(() => '');
+        this.photos = [];
+        const remark = document.getElementById('appearance-remark');
+        if (remark) remark.value = '';
+        this._renderChecklist();
+        this._renderPhotos();
+        this._updateFormValidity();
+    }
+
+    // ===== Photos =====
+
+    async _addFiles(fileList) {
+        const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name));
+        if (!files.length) return;
+        const room = APPEARANCE_DEFAULTS.MAX_PHOTOS - this.photos.length;
+        if (room <= 0) {
+            alert(`แนบรูปได้สูงสุด ${APPEARANCE_DEFAULTS.MAX_PHOTOS} รูป`);
+            return;
+        }
+        if (files.length > room) alert(`แนบได้อีก ${room} รูป — ระบบจะใช้ ${room} รูปแรกที่เลือก`);
+
+        for (const file of files.slice(0, room)) {
+            this.isProcessingPhoto = true;
+            this._renderPhotos();
+            this._updateFormValidity();
+            try {
+                const dataUrl = await this._compress(file);
+                this.photos.push({ dataUrl, uploaded: null });
+            } catch (err) {
+                console.error(err);
+                alert('เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่หรือเลือกรูปอื่น (รองรับ JPG/PNG)');
+            } finally {
+                this.isProcessingPhoto = false;
+            }
+        }
+        this._renderPhotos();
+        this._updateFormValidity();
+    }
+
+    _loadImage(src) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error('decode failed'));
+            img.src = src;
+        });
+    }
+
+    async _compress(file) {
+        const objectUrl = URL.createObjectURL(file);
+        try {
+            const img = await this._loadImage(objectUrl);
+            const max = APPEARANCE_DEFAULTS.PHOTO_MAX_SIDE;
+            let w = img.naturalWidth, h = img.naturalHeight;
+            const scale = Math.min(1, max / Math.max(w, h));
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            return canvas.toDataURL('image/jpeg', APPEARANCE_DEFAULTS.PHOTO_QUALITY);
+        } finally {
+            URL.revokeObjectURL(objectUrl);
+        }
+    }
+
+    // ประทับข้อมูลการตรวจลงบนรูป (หลักฐานย้อนหลังแม้ไฟล์ถูกคัดลอกออกไป)
+    async _stamp(dataUrl, info) {
+        const img = await this._loadImage(dataUrl);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        const fontSize = Math.max(14, Math.round(canvas.width / 45));
+        const pad = Math.round(fontSize * 0.6);
+        const lines = [
+            `${info.time}  |  ${info.machine}  |  ${info.part}`,
+            `ผู้ตรวจ: ${info.operator}  |  ผล: ${info.result === 'PASS' ? 'ผ่าน (OK)' : 'ไม่ผ่าน (NG)'}  |  รูป ${info.index}/${info.total}`
+        ];
+        const barH = lines.length * fontSize * 1.35 + pad * 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, canvas.height - barH, canvas.width, barH);
+        ctx.font = `bold ${fontSize}px Sarabun, sans-serif`;
+        ctx.textBaseline = 'top';
+        lines.forEach((line, i) => {
+            ctx.fillStyle = i === 1 && info.result !== 'PASS' ? '#fca5a5' : '#ffffff';
+            ctx.fillText(line, pad, canvas.height - barH + pad + i * fontSize * 1.35, canvas.width - pad * 2);
+        });
+        return canvas.toDataURL('image/jpeg', APPEARANCE_DEFAULTS.PHOTO_QUALITY);
+    }
+
+    // ===== Submit =====
+
+    async submit() {
+        if (this.isSubmitting) return;
+        const missing = this._missingItems();
+        if (missing.length) {
+            alert('ยังบันทึกไม่ได้:\n- ' + missing.join('\n- '));
+            return;
+        }
+
+        const machine = this._currentMachine();
+        const part = document.getElementById('part-id')?.value || '';
+        const operator = document.getElementById('operator')?.value || '';
+        const remark = document.getElementById('appearance-remark')?.value.trim() || '';
+        const checklist = this.checklist.map((label, i) => ({ label, result: this.results[i] }));
+        const result = checklist.some(c => c.result === 'FAIL') ? 'FAIL' : 'PASS';
+        const sig = `${machine}|${part}|${operator}|${result}`;
+
+        const btn = document.getElementById('submit-btn');
+        const setBtn = (text) => { if (btn) btn.innerText = text; };
+        this.isSubmitting = true;
+        if (btn) btn.disabled = true;
+
+        try {
+            const total = this.photos.length;
+            const now = new Date();
+            const p2 = n => String(n).padStart(2, '0');
+            const timeText = `${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} ${p2(now.getHours())}:${p2(now.getMinutes())}`;
+
+            for (let i = 0; i < total; i++) {
+                const photo = this.photos[i];
+                // อัปโหลดแล้วด้วยข้อมูลชุดเดิม → ข้ามได้ (กรณีกดบันทึกซ้ำหลังเน็ตหลุด)
+                if (photo.uploaded && photo.uploaded.sig === sig) continue;
+                setBtn(`กำลังอัปโหลดรูป ${i + 1}/${total}...`);
+                const stamped = await this._stamp(photo.dataUrl, {
+                    time: timeText, machine, part, operator, result, index: i + 1, total
+                });
+                const saved = await this.service.uploadPhoto({
+                    dataUrl: stamped, machine, part, operator, result, index: i + 1
+                });
+                photo.uploaded = { id: saved.id, url: saved.url, sig };
+                this.localThumbs[saved.id] = stamped;
+                this._renderPhotos();
+            }
+
+            setBtn('กำลังบันทึกผลตรวจ...');
+            const photos = this.photos.map(p => ({ id: p.uploaded.id, url: p.uploaded.url }));
+            const saved = await this.service.addRecord({ machine, part, operator, remark, checklist, photos });
+
+            const ts = Number(saved?.ts) || Date.now();
+            this.lastByMachine[machine] = { ts, result, operator };
+            if (AppConfig.USE_GOOGLE_SHEET) {
+                this.records.unshift({
+                    ts,
+                    timestamp: saved?.timestamp || '',
+                    machine, part, operator, result, remark, checklist,
+                    failedItems: checklist.filter(c => c.result === 'FAIL').map(c => c.label).join(', '),
+                    photoIds: photos.map(p => p.id)
+                });
+            } else {
+                await this.reload(true);
+            }
+
+            this._toast(result === 'PASS' ? '✓ บันทึกผลตรวจสภาพภายนอกแล้ว' : '⚠ บันทึกแล้ว — พบปัญหา แจ้งหัวหน้างานด้วย', result === 'PASS' ? 'success' : 'error');
+            this._resetForm();
+            this._renderStatus();
+            this._renderHistory();
+        } catch (err) {
+            console.error('Appearance submit error:', err);
+            const done = this.photos.filter(p => p.uploaded && p.uploaded.sig === sig).length;
+            alert(`บันทึกไม่สำเร็จ: ${err.message}\n\nรูปที่อัปโหลดแล้ว ${done}/${this.photos.length} รูปจะไม่ถูกส่งซ้ำ — ตรวจสอบอินเทอร์เน็ตแล้วกดบันทึกอีกครั้ง`);
+        } finally {
+            this.isSubmitting = false;
+            this._updateFormValidity();
+        }
+    }
+
+    // ===== History / Dashboard =====
+
+    _setHistoryLoading(isLoading) {
+        document.getElementById('appearance-history-loading')?.classList.toggle('hidden', !isLoading);
+    }
+
+    _historyRecords() {
+        const machine = this._currentMachine();
+        if (this.historyAllMachines || !machine) return this.records;
+        return this.records.filter(r => r.machine === machine);
+    }
+
+    // นับรอบที่ควรตรวจ vs รอบที่ตรวจจริง ต่อเครื่องต่อวันผลิต (08:00–07:59)
+    // เริ่มนับจากการตรวจครั้งแรกของวันนั้น — ช่วงที่เครื่องยังไม่เดิน/วันที่เครื่องหยุดจึงไม่ถูกนับเป็นรอบที่ขาด
+    _coverage(records) {
+        const intervalMs = this.intervalMin * 60000;
+        const groups = {};
+        records.forEach(r => {
+            const d = new Date(r.ts);
+            if (d.getHours() < 8) d.setDate(d.getDate() - 1);
+            const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0).getTime();
+            const key = `${r.machine}|${dayStart}`;
+            if (!groups[key]) groups[key] = { dayEnd: dayStart + 24 * 3600000, times: [] };
+            groups[key].times.push(r.ts);
+        });
+        let expected = 0, covered = 0;
+        const now = Date.now();
+        Object.values(groups).forEach(g => {
+            const first = Math.min(...g.times);
+            const span = Math.max(0, Math.min(now, g.dayEnd) - first);
+            expected += Math.max(1, Math.ceil(span / intervalMs));
+            covered += new Set(g.times.map(t => Math.floor((t - first) / intervalMs))).size;
+        });
+        return { expected, covered: Math.min(covered, expected) };
+    }
+
+    _renderHistory() {
+        if (!document.getElementById('appearance-panel')) return;
+
+        const machine = this._currentMachine();
+        const scopeLabel = document.getElementById('appearance-history-scope');
+        if (scopeLabel) {
+            scopeLabel.textContent = this.historyAllMachines || !machine ? 'ทุกเครื่อง' : this._shortMachine(machine);
+        }
+        const toggle = document.getElementById('appearance-history-all');
+        if (toggle) toggle.checked = this.historyAllMachines;
+
+        const errEl = document.getElementById('appearance-error');
+        if (errEl) {
+            errEl.textContent = this.loadError;
+            errEl.classList.toggle('hidden', !this.loadError);
+        }
+
+        const records = this._historyRecords();
+        const pass = records.filter(r => r.result === 'PASS').length;
+        const fail = records.length - pass;
+        const rate = records.length ? (pass / records.length * 100) : null;
+        const cov = this._coverage(records);
+        const covPct = cov.expected ? (cov.covered / cov.expected * 100) : null;
+
+        const setText = (id, text, cls) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = text;
+            if (cls) el.className = cls;
+        };
+        setText('appearance-kpi-total', String(records.length));
+        setText('appearance-kpi-fail', String(fail), `text-2xl font-bold ${fail ? 'text-red-600' : 'text-gray-800'}`);
+        setText('appearance-kpi-rate', rate === null ? '-' : `${rate.toFixed(1)}%`,
+            `text-2xl font-bold ${rate === null ? 'text-gray-800' : rate >= 100 ? 'text-green-600' : rate >= 95 ? 'text-yellow-600' : 'text-red-600'}`);
+        setText('appearance-kpi-coverage', covPct === null ? '-' : `${cov.covered}/${cov.expected}`,
+            `text-2xl font-bold ${covPct === null ? 'text-gray-800' : covPct >= 90 ? 'text-green-600' : covPct >= 70 ? 'text-yellow-600' : 'text-red-600'}`);
+        setText('appearance-kpi-coverage-sub', covPct === null ? 'รอบที่ตรวจ/ควรตรวจ' : `ตรงรอบ ${covPct.toFixed(0)}%`);
+
+        this._renderChart(records);
+
+        const list = document.getElementById('appearance-history-list');
+        if (!list) return;
+        if (records.length === 0) {
+            list.innerHTML = '<p class="col-span-full text-center text-sm text-gray-400 py-8">ยังไม่มีผลตรวจสภาพภายนอกในช่วงเวลานี้</p>';
+        } else {
+            list.innerHTML = records.slice(0, this.historyLimit).map((r, idx) => {
+                const isPass = r.result === 'PASS';
+                const firstId = r.photoIds?.[0];
+                const thumb = firstId
+                    ? `<img src="${this._esc(this._thumbUrl(firstId))}" alt="รูปตรวจ" loading="lazy" referrerpolicy="no-referrer"
+                           class="w-full h-full object-cover" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'w-full h-full flex items-center justify-center text-[10px] text-gray-400 text-center px-1',textContent:'กำลังสร้างรูปย่อ…'}))">`
+                    : '<div class="w-full h-full flex items-center justify-center text-gray-300 text-xs">ไม่มีรูป</div>';
+                const more = (r.photoIds?.length || 0) > 1
+                    ? `<span class="absolute bottom-1 right-1 text-[10px] font-bold bg-black/60 text-white px-1.5 rounded">+${r.photoIds.length - 1}</span>` : '';
+                const when = r.ts ? this._formatDateTime(r.ts) : this._esc(r.timestamp);
+                return `
+                    <div class="flex gap-3 border rounded-lg p-2 ${isPass ? 'border-gray-200' : 'border-red-300 bg-red-50/50'}">
+                        <button type="button" data-appearance-open="${idx}" class="relative shrink-0 w-20 h-20 rounded-md overflow-hidden bg-gray-100 cursor-zoom-in">
+                            ${thumb}${more}
+                        </button>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${isPass ? 'bg-green-100 text-green-700' : 'bg-red-600 text-white'}">${isPass ? '✓ ผ่าน' : '✗ ไม่ผ่าน'}</span>
+                                <span class="text-xs text-gray-500">${when}</span>
+                            </div>
+                            <p class="text-xs text-gray-700 mt-1 truncate"><b>${this._esc(this._shortMachine(r.machine))}</b> · ${this._esc(r.part)}</p>
+                            <p class="text-[11px] text-gray-500 truncate">ผู้ตรวจ: ${this._esc(r.operator)}</p>
+                            ${!isPass && r.failedItems ? `<p class="text-[11px] text-red-700 font-semibold truncate">พบ: ${this._esc(r.failedItems)}</p>` : ''}
+                            ${r.remark ? `<p class="text-[11px] text-gray-600 italic truncate" title="${this._esc(r.remark)}">“${this._esc(r.remark)}”</p>` : ''}
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        const moreBtn = document.getElementById('appearance-history-more');
+        if (moreBtn) {
+            const remaining = records.length - this.historyLimit;
+            moreBtn.classList.toggle('hidden', remaining <= 0);
+            moreBtn.textContent = `ดูเพิ่มอีก ${Math.min(remaining, APPEARANCE_DEFAULTS.HISTORY_PAGE)} รายการ (เหลือ ${remaining})`;
+        }
+    }
+
+    _renderChart(records) {
+        const canvas = document.getElementById('appearance-chart');
+        if (!canvas || typeof Chart === 'undefined') return;
+
+        // รวมผลรายวันผลิต (เริ่ม 08:00)
+        const byDay = {};
+        records.forEach(r => {
+            const d = new Date(r.ts);
+            if (d.getHours() < 8) d.setDate(d.getDate() - 1);
+            const key = StatUtils.dateToISO(d);
+            if (!byDay[key]) byDay[key] = { pass: 0, fail: 0 };
+            byDay[key][r.result === 'PASS' ? 'pass' : 'fail']++;
+        });
+        const days = Object.keys(byDay).sort();
+        const labels = days.map(k => { const [, m, d] = k.split('-'); return `${d}/${m}`; });
+        const passData = days.map(k => byDay[k].pass);
+        const failData = days.map(k => byDay[k].fail);
+
+        if (this.chart) {
+            this.chart.data.labels = labels;
+            this.chart.data.datasets[0].data = passData;
+            this.chart.data.datasets[1].data = failData;
+            this.chart.update();
+            return;
+        }
+        this.chart = new Chart(canvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'ผ่าน', data: passData, backgroundColor: 'rgba(34,197,94,0.75)', borderRadius: 3, stack: 'r' },
+                    { label: 'ไม่ผ่าน', data: failData, backgroundColor: 'rgba(239,68,68,0.85)', borderRadius: 3, stack: 'r' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                    tooltip: {
+                        callbacks: {
+                            footer: (items) => {
+                                const i = items[0].dataIndex;
+                                const total = passData[i] + failData[i];
+                                return total ? `อัตราผ่าน ${(passData[i] / total * 100).toFixed(0)}%` : '';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { stacked: true, grid: { display: false } },
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'จำนวนครั้งตรวจ' } }
+                }
+            }
+        });
+    }
+
+    // ===== Lightbox =====
+
+    _openLightbox(record, startIndex = 0) {
+        const ids = record.photoIds || [];
+        if (!ids.length) return;
+        let index = startIndex;
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 z-[70] bg-black/90 flex flex-col';
+        const render = () => {
+            const id = ids[index];
+            modal.innerHTML = `
+                <div class="flex items-center justify-between text-white px-4 py-3 text-sm">
+                    <div class="min-w-0">
+                        <p class="font-bold truncate">${this._esc(this._shortMachine(record.machine))} · ${this._esc(record.part)}</p>
+                        <p class="text-xs text-gray-300">${record.ts ? this._formatDateTime(record.ts) : this._esc(record.timestamp)} · ${this._esc(record.operator)} · ${record.result === 'PASS' ? '✓ ผ่าน' : '✗ ไม่ผ่าน'}</p>
+                    </div>
+                    <div class="flex items-center gap-3 shrink-0">
+                        <a href="${this._esc(this._driveUrl(id))}" target="_blank" rel="noopener" class="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg">เปิดใน Google Drive ↗</a>
+                        <button type="button" data-lb="close" class="text-3xl leading-none hover:text-red-400">&times;</button>
+                    </div>
+                </div>
+                <div class="flex-1 min-h-0 flex items-center justify-center relative px-2">
+                    ${ids.length > 1 ? '<button type="button" data-lb="prev" class="absolute left-2 z-10 h-12 w-12 rounded-full bg-white/15 hover:bg-white/30 text-white text-2xl">‹</button>' : ''}
+                    <img src="${this._esc(this._thumbUrl(id, 1600))}" referrerpolicy="no-referrer" alt="รูปที่ ${index + 1}" class="max-h-full max-w-full object-contain">
+                    ${ids.length > 1 ? '<button type="button" data-lb="next" class="absolute right-2 z-10 h-12 w-12 rounded-full bg-white/15 hover:bg-white/30 text-white text-2xl">›</button>' : ''}
+                </div>
+                <div class="text-center text-gray-300 text-xs py-3">
+                    รูป ${index + 1}/${ids.length}
+                    ${record.failedItems ? ` · <span class="text-red-300 font-bold">พบ: ${this._esc(record.failedItems)}</span>` : ''}
+                    ${record.remark ? ` · “${this._esc(record.remark)}”` : ''}
+                </div>`;
+        };
+        const close = () => { modal.remove(); document.removeEventListener('keydown', onKey); };
+        const step = (d) => { index = (index + d + ids.length) % ids.length; render(); };
+        const onKey = (e) => {
+            if (e.key === 'Escape') close();
+            if (e.key === 'ArrowLeft') step(-1);
+            if (e.key === 'ArrowRight') step(1);
+        };
+        modal.addEventListener('click', (e) => {
+            const action = e.target.closest('[data-lb]')?.dataset.lb;
+            if (action === 'close' || e.target === modal) close();
+            else if (action === 'prev') step(-1);
+            else if (action === 'next') step(1);
+        });
+        document.addEventListener('keydown', onKey);
+        render();
+        document.body.appendChild(modal);
+    }
+
+    _openPreview(i) {
+        const photo = this.photos[i];
+        if (!photo) return;
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 cursor-zoom-out';
+        modal.innerHTML = `<img src="${photo.dataUrl}" alt="ตัวอย่างรูป" class="max-h-full max-w-full object-contain">`;
+        modal.addEventListener('click', () => modal.remove());
+        document.body.appendChild(modal);
+    }
+
+    // ===== Events =====
+
+    _bindEvents() {
+        document.querySelectorAll('[data-entry-mode]').forEach(tab => {
+            tab.addEventListener('click', () => this.setMode(tab.dataset.entryMode));
+        });
+
+        document.addEventListener('click', (e) => {
+            const goto = e.target.closest('[data-appearance-goto]');
+            if (goto) {
+                this.gotoMachine(goto.dataset.appearanceGoto);
+                return;
+            }
+            const open = e.target.closest('[data-appearance-open]');
+            if (open) {
+                const rec = this._historyRecords()[Number(open.dataset.appearanceOpen)];
+                if (rec) this._openLightbox(rec);
+            }
+        });
+
+        const section = document.getElementById('appearance-input-section');
+        section?.addEventListener('click', (e) => {
+            const resultBtn = e.target.closest('[data-appearance-result]');
+            if (resultBtn) {
+                const row = resultBtn.closest('[data-appearance-row]');
+                this.results[Number(row.dataset.appearanceRow)] = resultBtn.dataset.appearanceResult;
+                this._renderChecklist();
+                this._updateFormValidity();
+                if (resultBtn.dataset.appearanceResult === 'FAIL') document.getElementById('appearance-remark')?.focus();
+                return;
+            }
+            if (e.target.closest('#appearance-all-pass')) {
+                this.results = this.checklist.map(() => 'PASS');
+                this._renderChecklist();
+                this._updateFormValidity();
+                return;
+            }
+            const removeBtn = e.target.closest('[data-appearance-remove]');
+            if (removeBtn) {
+                this.photos.splice(Number(removeBtn.dataset.appearanceRemove), 1);
+                this._renderPhotos();
+                this._updateFormValidity();
+                return;
+            }
+            const preview = e.target.closest('[data-appearance-preview]');
+            if (preview) this._openPreview(Number(preview.dataset.appearancePreview));
+        });
+
+        section?.addEventListener('change', (e) => {
+            const input = e.target;
+            if (input.type !== 'file') return;
+            const files = input.files;
+            this._addFiles(files).finally(() => { input.value = ''; });
+        });
+
+        section?.addEventListener('input', (e) => {
+            if (e.target.id === 'appearance-remark') this._updateFormValidity();
+        });
+
+        // ฟิลด์ที่ใช้ร่วมกับฟอร์มวัดขนาด
+        document.getElementById('machine-id')?.addEventListener('change', () => {
+            this._updateFormValidity();
+            this._renderStatus();
+            this._renderHistory();
+        });
+        document.addEventListener('change', (e) => {
+            if (e.target.id === 'operator') this._updateFormValidity();
+        });
+
+        document.getElementById('appearance-history-all')?.addEventListener('change', (e) => {
+            this.historyAllMachines = e.target.checked;
+            this.historyLimit = APPEARANCE_DEFAULTS.HISTORY_PAGE;
+            this._renderHistory();
+        });
+        document.getElementById('appearance-history-more')?.addEventListener('click', () => {
+            this.historyLimit += APPEARANCE_DEFAULTS.HISTORY_PAGE;
+            this._renderHistory();
+        });
+        document.getElementById('appearance-refresh-btn')?.addEventListener('click', () => this.reload(false));
+
+        // กันปิดหน้าโดยไม่ได้ตั้งใจระหว่างมีรูปที่ยังไม่บันทึก
+        window.addEventListener('beforeunload', (e) => {
+            if (this.photos.length && !this.isSubmitting) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+    }
+}
