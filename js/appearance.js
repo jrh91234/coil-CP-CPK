@@ -9,6 +9,8 @@ const APPEARANCE_DEFAULTS = {
     CHECKLIST: ['บิดงอ / เสียรูป', 'รอยขีดข่วนที่ตัวงาน'], // แก้ได้จาก Config: APPEARANCE_CHECKLIST
     PHOTO_MAX_SIDE: 1920,     // ขนาดปกติ (ด้านยาวสุด px)
     PHOTO_QUALITY: 0.85,
+    PHOTO_MAX_AGE_SEC: 120,   // รูปต้องเพิ่งถ่าย (กันเอารูปเก่าในเครื่องมาใช้)
+    PHOTO_HASH_KEEP: 300,     // จำลายนิ้วมือรูปที่เคยส่งไว้กี่รูป (กันส่งรูปเดิมซ้ำ)
     SOON_MIN: 10,             // เหลือน้อยกว่านี้ (นาที) = ใกล้ถึงรอบ
     RENDER_TICK_MS: 30 * 1000,
     SERVER_POLL_MS: 3 * 60 * 1000,
@@ -460,7 +462,7 @@ class AppearanceModule {
                     <span id="appearance-photo-count" class="text-xs font-semibold text-gray-500"></span>
                 </div>
                 <div id="appearance-photo-grid" class="grid grid-cols-3 gap-2"></div>
-                <p class="text-[11px] text-gray-400 mt-1">แตะช่องเพื่อถ่ายรูปตามหัวข้อ · ระบบประทับเวลา/เครื่อง/ผู้ตรวจลงบนรูปให้อัตโนมัติ</p>
+                <p class="text-[11px] text-gray-400 mt-1">แตะช่องเพื่อถ่ายรูปใหม่ด้วยกล้อง (ใช้รูปเก่าในเครื่องไม่ได้) · ระบบประทับเวลา/เครื่อง/ผู้ตรวจลงบนรูปให้อัตโนมัติ</p>
             </div>
 
             <div class="mt-4">
@@ -533,10 +535,6 @@ class AppearanceModule {
                         <span class="relative text-2xl leading-none">📷</span>
                         <span class="relative text-[11px] font-bold text-red-600 bg-white/80 rounded px-1 mt-1">แตะเพื่อถ่าย</span>
                         <input type="file" accept="image/*" capture="environment" data-appearance-slot="${i}" class="hidden">
-                    </label>
-                    <label class="block cursor-pointer text-center text-[11px] text-blue-600 hover:text-blue-800 mt-1 select-none">
-                        🖼️ เลือกจากเครื่อง
-                        <input type="file" accept="image/*" data-appearance-slot="${i}" class="hidden">
                     </label>`;
             }
             return `<div>${head}${body}</div>`;
@@ -639,18 +637,57 @@ class AppearanceModule {
 
     // ===== Photos =====
 
+    // ลายนิ้วมือของรูป (hash ของข้อมูลรูปหลังย่อ) ใช้ตรวจว่ารูปซ้ำหรือไม่
+    _photoHash(dataUrl) {
+        let h1 = 0x811c9dc5, h2 = 0;
+        for (let i = 0; i < dataUrl.length; i++) {
+            const c = dataUrl.charCodeAt(i);
+            h1 = Math.imul(h1 ^ c, 16777619);
+            h2 = (h2 * 31 + c) | 0;
+        }
+        return (h1 >>> 0).toString(16) + (h2 >>> 0).toString(16) + dataUrl.length.toString(16);
+    }
+
+    _usedHashes() {
+        try { return JSON.parse(localStorage.getItem('cpk_appearance_photo_hashes') || '[]'); }
+        catch (e) { return []; }
+    }
+
+    _rememberHashes(hashes) {
+        try {
+            const all = [...this._usedHashes(), ...hashes].slice(-APPEARANCE_DEFAULTS.PHOTO_HASH_KEEP);
+            localStorage.setItem('cpk_appearance_photo_hashes', JSON.stringify(all));
+        } catch (e) { /* ไม่ critical */ }
+    }
+
     async _setSlotFile(slotIndex, file) {
         if (!file || !APPEARANCE_PHOTO_SLOTS[slotIndex]) return;
         if (!(file.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/i.test(file.name))) return;
+
+        // ต้องเป็นรูปที่เพิ่งถ่ายจากกล้อง — ไฟล์ที่สร้างไว้นานแล้ว (รูปเก่าในเครื่อง) ใช้ไม่ได้
+        const ageSec = file.lastModified ? (Date.now() - file.lastModified) / 1000 : 0;
+        if (ageSec > APPEARANCE_DEFAULTS.PHOTO_MAX_AGE_SEC) {
+            alert('รูปนี้ไม่ได้เพิ่งถ่าย — ต้องถ่ายรูปใหม่ด้วยกล้องเท่านั้น ห้ามใช้รูปเก่าในเครื่อง');
+            return;
+        }
+
         this.processingSlot = slotIndex;
         this._renderPhotos();
         this._updateFormValidity();
         try {
             const dataUrl = await this._compress(file);
-            this.photos[slotIndex] = { dataUrl, uploaded: null };
+            const hash = this._photoHash(dataUrl);
+            const dupSlot = this.photos.findIndex((p, i) => p && i !== slotIndex && p.hash === hash);
+            if (dupSlot >= 0) {
+                alert(`รูปนี้ซ้ำกับรูปช่อง "${APPEARANCE_PHOTO_SLOTS[dupSlot].label}" — ต้องถ่ายแยกแต่ละหัวข้อ`);
+            } else if (this._usedHashes().includes(hash)) {
+                alert('รูปนี้เคยใช้บันทึกไปแล้ว — ต้องถ่ายรูปใหม่ทุกครั้ง');
+            } else {
+                this.photos[slotIndex] = { dataUrl, hash, uploaded: null };
+            }
         } catch (err) {
             console.error(err);
-            alert('เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่หรือเลือกรูปอื่น (รองรับ JPG/PNG)');
+            alert('เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่อีกครั้ง');
         } finally {
             this.processingSlot = null;
         }
@@ -763,6 +800,7 @@ class AppearanceModule {
             const photos = this.photos.map((p, i) => ({ id: p.uploaded.id, url: p.uploaded.url, label: APPEARANCE_PHOTO_SLOTS[i].label }));
             const saved = await this.service.addRecord({ machine, part, operator, remark, checklist, photos });
 
+            this._rememberHashes(this.photos.map(p => p.hash));
             const ts = Number(saved?.ts) || Date.now();
             this.lastByMachine[machine] = { ts, result, operator };
             this.lastActivityByMachine[machine] = Math.max(Number(this.lastActivityByMachine[machine]) || 0, ts);
