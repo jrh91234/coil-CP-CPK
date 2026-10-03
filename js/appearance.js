@@ -19,7 +19,7 @@ const APPEARANCE_DEFAULTS = {
 
 // ---------- รูปที่ต้องถ่าย (บังคับครบทุกช่อง เรียงตามลำดับนี้) ----------
 const APPEARANCE_PHOTO_SLOTS = [
-    { key: 'Single',   label: 'ชิ้นงานเดี่ยว',          hint: 'ถ่ายชิ้นงานเดี่ยว ๆ ให้เห็นผิวงานว่าไม่มีรอย', example: '' },
+    { key: 'Single',   label: 'ชิ้นงานเดี่ยว',          hint: 'ถ่ายชิ้นงานเดี่ยว ๆ ให้เห็นผิวงานว่าไม่มีรอย', example: 'images/appearance-example-single.jpg' },
     { key: 'GoNoGo',   label: 'ใส่ Jig Go/NoGo Gauge', hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig Go/NoGo Gauge',   example: 'images/appearance-example-gonogo.jpg' },
     { key: 'Flatness', label: 'ใส่ Jig ระนาบ',          hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig ระนาบ',           example: 'images/appearance-example-flatness.jpg' }
 ];
@@ -526,7 +526,7 @@ class AppearanceModule {
                     </div>`;
             } else {
                 const example = slot.example
-                    ? `<img src="${this._esc(slot.example)}" alt="" class="absolute inset-0 w-full h-full object-cover opacity-30">
+                    ? `<img src="${this._esc(slot.example)}" alt="" class="absolute inset-0 w-full h-full object-contain opacity-40">
                        <span class="absolute top-1 left-1 text-[9px] font-bold bg-gray-700/70 text-white px-1 rounded">ตัวอย่าง</span>`
                     : '';
                 body = `
