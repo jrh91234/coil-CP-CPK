@@ -104,6 +104,21 @@ const WorkTime = {
         return ms / 60000;
     },
 
+    // เวลาที่ได้หลังทำงานไปอีก minutes นาที นับจาก start (ข้ามช่วงพัก)
+    addWorkMinutes(start, minutes) {
+        let t = start;
+        let remain = minutes * 60000;
+        const breaks = this._breaks(start, start + remain + 48 * 3600000).sort((x, y) => x[0] - y[0]);
+        for (const [s, e] of breaks) {
+            if (e <= t) continue;
+            if (s <= t) { t = e; continue; }       // เริ่มต้นอยู่ในช่วงพัก → ข้ามไปหลังพัก
+            if (t + remain <= s) break;            // ทำงานครบก่อนถึงพักครั้งถัดไป
+            remain -= (s - t);
+            t = e;
+        }
+        return t + remain;
+    },
+
     breakAt(now) {
         return this._breaks(now, now).find(([s, e]) => now >= s && now < e) || null;
     }
