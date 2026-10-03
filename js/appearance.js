@@ -7,8 +7,6 @@
 const APPEARANCE_DEFAULTS = {
     INTERVAL_MIN: 60,                                   // แก้ได้จาก Config: APPEARANCE_INTERVAL_MIN
     CHECKLIST: ['บิดงอ / เสียรูป', 'รอยขีดข่วนที่ตัวงาน'], // แก้ได้จาก Config: APPEARANCE_CHECKLIST
-    MIN_PHOTOS: 1,
-    MAX_PHOTOS: 3,
     PHOTO_MAX_SIDE: 1920,     // ขนาดปกติ (ด้านยาวสุด px)
     PHOTO_QUALITY: 0.85,
     SOON_MIN: 10,             // เหลือน้อยกว่านี้ (นาที) = ใกล้ถึงรอบ
@@ -16,6 +14,13 @@ const APPEARANCE_DEFAULTS = {
     SERVER_POLL_MS: 3 * 60 * 1000,
     HISTORY_PAGE: 12
 };
+
+// ---------- รูปที่ต้องถ่าย (บังคับครบทุกช่อง เรียงตามลำดับนี้) ----------
+const APPEARANCE_PHOTO_SLOTS = [
+    { key: 'Single',   label: 'ชิ้นงานเดี่ยว',          hint: 'ถ่ายชิ้นงานเดี่ยว ๆ ให้เห็นผิวงานว่าไม่มีรอย', example: '' },
+    { key: 'GoNoGo',   label: 'ใส่ Jig Go/NoGo Gauge', hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig Go/NoGo Gauge',   example: 'images/appearance-example-gonogo.jpg' },
+    { key: 'Flatness', label: 'ใส่ Jig ระนาบ',          hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig ระนาบ',           example: 'images/appearance-example-flatness.jpg' }
+];
 
 // ---------- เวลาทำงาน / เวลาพัก ----------
 // กะเช้า 08:00–17:00 (เวลาปกติ) + OT 17:30–20:00 · กะดึก 20:00–08:00
@@ -136,7 +141,8 @@ class AppearanceService {
                 timestamp: new Date(ts).toLocaleString('th-TH', { hour12: false }),
                 result: failed.length ? 'FAIL' : 'PASS',
                 failedItems: failed.join(', '),
-                photoIds: record.photos.map(p => p.id)
+                photoIds: record.photos.map(p => p.id),
+                photoLabels: record.photos.map(p => p.label || '')
             });
             return { ts, result: failed.length ? 'FAIL' : 'PASS' };
         }
@@ -173,7 +179,7 @@ class AppearanceModule {
         this.checklist = [...APPEARANCE_DEFAULTS.CHECKLIST];
         this.machines = [];
         this.results = [];          // 'PASS' | 'FAIL' | '' ต่อข้อ
-        this.photos = [];           // { dataUrl, uploaded: { id, url, sig } | null }
+        this.photos = APPEARANCE_PHOTO_SLOTS.map(() => null); // ต่อช่อง: { dataUrl, uploaded: { id, url, sig } | null } | null
         this.records = [];
         this.lastByMachine = {};
         this.lastActivityByMachine = {}; // เวลาบันทึกข้อมูลล่าสุดของแต่ละเครื่อง (วัดขนาด + ตรวจสภาพภายนอก) จาก server
@@ -184,7 +190,7 @@ class AppearanceModule {
         this.historyAllMachines = false;
         this.localThumbs = {};      // fileId → dataUrl (แสดงทันทีระหว่างรอ Drive สร้าง thumbnail)
         this.isSubmitting = false;
-        this.isProcessingPhoto = false;
+        this.processingSlot = null;   // ช่องรูปที่กำลังย่อขนาด
         this.chart = null;
         this.baseTitle = document.title;
         this.loadError = '';
@@ -450,21 +456,11 @@ class AppearanceModule {
 
             <div class="mt-4">
                 <div class="flex items-center justify-between mb-1">
-                    <label class="block text-sm font-medium text-gray-600">รูปถ่ายชิ้นงาน <span class="text-red-500">*</span></label>
+                    <label class="block text-sm font-medium text-gray-600">รูปถ่ายชิ้นงาน <span class="text-red-500">* ต้องครบ ${APPEARANCE_PHOTO_SLOTS.length} รูป</span></label>
                     <span id="appearance-photo-count" class="text-xs font-semibold text-gray-500"></span>
                 </div>
                 <div id="appearance-photo-grid" class="grid grid-cols-3 gap-2"></div>
-                <div class="grid grid-cols-2 gap-2 mt-2">
-                    <label id="appearance-camera-btn" class="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-colors select-none">
-                        📷 ถ่ายรูป
-                        <input type="file" accept="image/*" capture="environment" id="appearance-camera-input" class="hidden">
-                    </label>
-                    <label id="appearance-gallery-btn" class="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-blue-600 text-blue-700 hover:bg-blue-50 text-sm font-bold transition-colors select-none">
-                        🖼️ เลือกรูป
-                        <input type="file" accept="image/*" multiple id="appearance-gallery-input" class="hidden">
-                    </label>
-                </div>
-                <p class="text-[11px] text-gray-400 mt-1">ต้องมีอย่างน้อย ${APPEARANCE_DEFAULTS.MIN_PHOTOS} รูป สูงสุด ${APPEARANCE_DEFAULTS.MAX_PHOTOS} รูป · ระบบประทับเวลา/เครื่อง/ผู้ตรวจลงบนรูปให้อัตโนมัติ</p>
+                <p class="text-[11px] text-gray-400 mt-1">แตะช่องเพื่อถ่ายรูปตามหัวข้อ · ระบบประทับเวลา/เครื่อง/ผู้ตรวจลงบนรูปให้อัตโนมัติ</p>
             </div>
 
             <div class="mt-4">
@@ -504,49 +500,54 @@ class AppearanceModule {
     _renderPhotos() {
         const grid = document.getElementById('appearance-photo-grid');
         if (!grid) return;
-        const slots = [];
-        for (let i = 0; i < APPEARANCE_DEFAULTS.MAX_PHOTOS; i++) {
+        const spinner = '<svg class="h-5 w-5 animate-spin mb-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>';
+
+        grid.innerHTML = APPEARANCE_PHOTO_SLOTS.map((slot, i) => {
             const p = this.photos[i];
+            const head = `
+                <p class="text-[11px] font-bold leading-tight mb-1 ${p ? 'text-green-700' : 'text-gray-700'}" title="${this._esc(slot.hint)}">
+                    ${p ? '✓' : `${i + 1}.`} ${this._esc(slot.label)}
+                </p>`;
+            let body;
             if (p) {
-                slots.push(`
-                    <div class="relative aspect-square rounded-lg overflow-hidden border-2 ${p.uploaded ? 'border-green-400' : 'border-blue-300'} bg-gray-100">
-                        <img src="${p.dataUrl}" alt="รูปที่ ${i + 1}" data-appearance-preview="${i}" class="w-full h-full object-cover cursor-zoom-in">
-                        <span class="absolute top-1 left-1 text-[10px] font-bold bg-black/60 text-white px-1.5 rounded">${i + 1}</span>
+                body = `
+                    <div class="relative aspect-square rounded-lg overflow-hidden border-2 ${p.uploaded ? 'border-green-500' : 'border-blue-400'} bg-gray-100">
+                        <img src="${p.dataUrl}" alt="${this._esc(slot.label)}" data-appearance-preview="${i}" class="w-full h-full object-cover cursor-zoom-in">
                         ${p.uploaded ? '<span class="absolute bottom-1 left-1 text-[10px] font-bold bg-green-600 text-white px-1.5 rounded">☁ อัปแล้ว</span>' : ''}
-                        <button type="button" data-appearance-remove="${i}" title="ลบรูป"
-                            class="absolute top-1 right-1 h-6 w-6 rounded-full bg-black/60 hover:bg-red-600 text-white text-sm leading-none flex items-center justify-center">&times;</button>
-                    </div>`);
-            } else if (i === this.photos.length && this.isProcessingPhoto) {
-                slots.push(`
+                        <button type="button" data-appearance-remove="${i}" title="ลบแล้วถ่ายใหม่"
+                            class="absolute top-1 right-1 h-7 w-7 rounded-full bg-black/60 hover:bg-red-600 text-white text-base leading-none flex items-center justify-center">&times;</button>
+                    </div>`;
+            } else if (this.processingSlot === i) {
+                body = `
                     <div class="aspect-square rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 flex flex-col items-center justify-center text-blue-500 text-[11px]">
-                        <svg class="h-5 w-5 animate-spin mb-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>
-                        กำลังเตรียมรูป
-                    </div>`);
+                        ${spinner}กำลังเตรียมรูป
+                    </div>`;
             } else {
-                const required = i < APPEARANCE_DEFAULTS.MIN_PHOTOS;
-                slots.push(`
-                    <label class="cursor-pointer aspect-square rounded-lg border-2 border-dashed ${required ? 'border-red-300 bg-red-50/40 text-red-400' : 'border-gray-300 bg-gray-50 text-gray-400'} hover:border-blue-400 hover:text-blue-500 flex flex-col items-center justify-center text-[11px] transition-colors">
-                        <span class="text-xl leading-none">＋</span>
-                        <span>${required ? 'จำเป็น' : 'ไม่บังคับ'}</span>
-                        <input type="file" accept="image/*" capture="environment" class="appearance-slot-input hidden">
-                    </label>`);
+                const example = slot.example
+                    ? `<img src="${this._esc(slot.example)}" alt="" class="absolute inset-0 w-full h-full object-cover opacity-30">
+                       <span class="absolute top-1 left-1 text-[9px] font-bold bg-gray-700/70 text-white px-1 rounded">ตัวอย่าง</span>`
+                    : '';
+                body = `
+                    <label class="relative cursor-pointer aspect-square rounded-lg overflow-hidden border-2 border-dashed border-red-300 bg-red-50/40 hover:border-blue-500 flex flex-col items-center justify-center text-center transition-colors">
+                        ${example}
+                        <span class="relative text-2xl leading-none">📷</span>
+                        <span class="relative text-[11px] font-bold text-red-600 bg-white/80 rounded px-1 mt-1">แตะเพื่อถ่าย</span>
+                        <input type="file" accept="image/*" capture="environment" data-appearance-slot="${i}" class="hidden">
+                    </label>
+                    <label class="block cursor-pointer text-center text-[11px] text-blue-600 hover:text-blue-800 mt-1 select-none">
+                        🖼️ เลือกจากเครื่อง
+                        <input type="file" accept="image/*" data-appearance-slot="${i}" class="hidden">
+                    </label>`;
             }
-        }
-        grid.innerHTML = slots.join('');
+            return `<div>${head}${body}</div>`;
+        }).join('');
 
         const countEl = document.getElementById('appearance-photo-count');
         if (countEl) {
-            const n = this.photos.length;
-            countEl.textContent = `${n}/${APPEARANCE_DEFAULTS.MAX_PHOTOS} รูป`;
-            countEl.className = `text-xs font-semibold ${n >= APPEARANCE_DEFAULTS.MIN_PHOTOS ? 'text-green-600' : 'text-red-500'}`;
+            const n = this.photos.filter(Boolean).length;
+            countEl.textContent = `${n}/${APPEARANCE_PHOTO_SLOTS.length} รูป`;
+            countEl.className = `text-xs font-semibold ${n === APPEARANCE_PHOTO_SLOTS.length ? 'text-green-600' : 'text-red-500'}`;
         }
-        const full = this.photos.length >= APPEARANCE_DEFAULTS.MAX_PHOTOS || this.isProcessingPhoto;
-        ['appearance-camera-btn', 'appearance-gallery-btn'].forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.classList.toggle('opacity-40', full);
-            el.classList.toggle('pointer-events-none', full);
-        });
     }
 
     _missingItems() {
@@ -555,11 +556,12 @@ class AppearanceModule {
         if (!document.getElementById('operator')?.value) missing.push('เลือกพนักงาน');
         const unanswered = this.results.map((r, i) => r ? null : i + 1).filter(Boolean);
         if (unanswered.length) missing.push(`เลือกผลตรวจข้อ ${unanswered.join(', ')}`);
-        if (this.photos.length < APPEARANCE_DEFAULTS.MIN_PHOTOS) missing.push(`แนบรูปอย่างน้อย ${APPEARANCE_DEFAULTS.MIN_PHOTOS} รูป`);
+        const missingPhotos = APPEARANCE_PHOTO_SLOTS.filter((_, i) => !this.photos[i]).map(sl => sl.label);
+        if (missingPhotos.length) missing.push(`ถ่ายรูป: ${missingPhotos.join(', ')}`);
         if (this.results.includes('FAIL') && !document.getElementById('appearance-remark')?.value.trim()) {
             missing.push('กรอกหมายเหตุ (มีข้อที่ไม่ผ่าน)');
         }
-        if (this.isProcessingPhoto) missing.push('รอเตรียมรูปให้เสร็จ');
+        if (this.processingSlot !== null) missing.push('รอเตรียมรูปให้เสร็จ');
         return missing;
     }
 
@@ -627,7 +629,7 @@ class AppearanceModule {
 
     _resetForm() {
         this.results = this.checklist.map(() => '');
-        this.photos = [];
+        this.photos = APPEARANCE_PHOTO_SLOTS.map(() => null);
         const remark = document.getElementById('appearance-remark');
         if (remark) remark.value = '';
         this._renderChecklist();
@@ -637,29 +639,20 @@ class AppearanceModule {
 
     // ===== Photos =====
 
-    async _addFiles(fileList) {
-        const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name));
-        if (!files.length) return;
-        const room = APPEARANCE_DEFAULTS.MAX_PHOTOS - this.photos.length;
-        if (room <= 0) {
-            alert(`แนบรูปได้สูงสุด ${APPEARANCE_DEFAULTS.MAX_PHOTOS} รูป`);
-            return;
-        }
-        if (files.length > room) alert(`แนบได้อีก ${room} รูป — ระบบจะใช้ ${room} รูปแรกที่เลือก`);
-
-        for (const file of files.slice(0, room)) {
-            this.isProcessingPhoto = true;
-            this._renderPhotos();
-            this._updateFormValidity();
-            try {
-                const dataUrl = await this._compress(file);
-                this.photos.push({ dataUrl, uploaded: null });
-            } catch (err) {
-                console.error(err);
-                alert('เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่หรือเลือกรูปอื่น (รองรับ JPG/PNG)');
-            } finally {
-                this.isProcessingPhoto = false;
-            }
+    async _setSlotFile(slotIndex, file) {
+        if (!file || !APPEARANCE_PHOTO_SLOTS[slotIndex]) return;
+        if (!(file.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/i.test(file.name))) return;
+        this.processingSlot = slotIndex;
+        this._renderPhotos();
+        this._updateFormValidity();
+        try {
+            const dataUrl = await this._compress(file);
+            this.photos[slotIndex] = { dataUrl, uploaded: null };
+        } catch (err) {
+            console.error(err);
+            alert('เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่หรือเลือกรูปอื่น (รองรับ JPG/PNG)');
+        } finally {
+            this.processingSlot = null;
         }
         this._renderPhotos();
         this._updateFormValidity();
@@ -706,7 +699,7 @@ class AppearanceModule {
         const pad = Math.round(fontSize * 0.6);
         const lines = [
             `${info.time}  |  ${info.machine}  |  ${info.part}`,
-            `ผู้ตรวจ: ${info.operator}  |  ผล: ${info.result === 'PASS' ? 'ผ่าน (OK)' : 'ไม่ผ่าน (NG)'}  |  รูป ${info.index}/${info.total}`
+            `ผู้ตรวจ: ${info.operator}  |  ผล: ${info.result === 'PASS' ? 'ผ่าน (OK)' : 'ไม่ผ่าน (NG)'}  |  รูป ${info.index}/${info.total}: ${info.label}`
         ];
         const barH = lines.length * fontSize * 1.35 + pad * 2;
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -744,7 +737,7 @@ class AppearanceModule {
         if (btn) btn.disabled = true;
 
         try {
-            const total = this.photos.length;
+            const total = APPEARANCE_PHOTO_SLOTS.length;
             const now = new Date();
             const p2 = n => String(n).padStart(2, '0');
             const timeText = `${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} ${p2(now.getHours())}:${p2(now.getMinutes())}`;
@@ -754,11 +747,12 @@ class AppearanceModule {
                 // อัปโหลดแล้วด้วยข้อมูลชุดเดิม → ข้ามได้ (กรณีกดบันทึกซ้ำหลังเน็ตหลุด)
                 if (photo.uploaded && photo.uploaded.sig === sig) continue;
                 setBtn(`กำลังอัปโหลดรูป ${i + 1}/${total}...`);
+                const slot = APPEARANCE_PHOTO_SLOTS[i];
                 const stamped = await this._stamp(photo.dataUrl, {
-                    time: timeText, machine, part, operator, result, index: i + 1, total
+                    time: timeText, machine, part, operator, result, index: i + 1, total, label: slot.label
                 });
                 const saved = await this.service.uploadPhoto({
-                    dataUrl: stamped, machine, part, operator, result, index: i + 1
+                    dataUrl: stamped, machine, part, operator, result, index: i + 1, slot: slot.key, label: slot.label
                 });
                 photo.uploaded = { id: saved.id, url: saved.url, sig };
                 this.localThumbs[saved.id] = stamped;
@@ -766,7 +760,7 @@ class AppearanceModule {
             }
 
             setBtn('กำลังบันทึกผลตรวจ...');
-            const photos = this.photos.map(p => ({ id: p.uploaded.id, url: p.uploaded.url }));
+            const photos = this.photos.map((p, i) => ({ id: p.uploaded.id, url: p.uploaded.url, label: APPEARANCE_PHOTO_SLOTS[i].label }));
             const saved = await this.service.addRecord({ machine, part, operator, remark, checklist, photos });
 
             const ts = Number(saved?.ts) || Date.now();
@@ -778,7 +772,8 @@ class AppearanceModule {
                     timestamp: saved?.timestamp || '',
                     machine, part, operator, result, remark, checklist,
                     failedItems: checklist.filter(c => c.result === 'FAIL').map(c => c.label).join(', '),
-                    photoIds: photos.map(p => p.id)
+                    photoIds: photos.map(p => p.id),
+                    photoLabels: photos.map(p => p.label)
                 });
             } else {
                 await this.reload(true);
@@ -790,8 +785,8 @@ class AppearanceModule {
             this._renderHistory();
         } catch (err) {
             console.error('Appearance submit error:', err);
-            const done = this.photos.filter(p => p.uploaded && p.uploaded.sig === sig).length;
-            alert(`บันทึกไม่สำเร็จ: ${err.message}\n\nรูปที่อัปโหลดแล้ว ${done}/${this.photos.length} รูปจะไม่ถูกส่งซ้ำ — ตรวจสอบอินเทอร์เน็ตแล้วกดบันทึกอีกครั้ง`);
+            const done = this.photos.filter(p => p && p.uploaded && p.uploaded.sig === sig).length;
+            alert(`บันทึกไม่สำเร็จ: ${err.message}\n\nรูปที่อัปโหลดแล้ว ${done}/${APPEARANCE_PHOTO_SLOTS.length} รูปจะไม่ถูกส่งซ้ำ — ตรวจสอบอินเทอร์เน็ตแล้วกดบันทึกอีกครั้ง`);
         } finally {
             this.isSubmitting = false;
             this._updateFormValidity();
@@ -1002,7 +997,7 @@ class AppearanceModule {
                     ${ids.length > 1 ? '<button type="button" data-lb="next" class="absolute right-2 z-10 h-12 w-12 rounded-full bg-white/15 hover:bg-white/30 text-white text-2xl">›</button>' : ''}
                 </div>
                 <div class="text-center text-gray-300 text-xs py-3">
-                    รูป ${index + 1}/${ids.length}
+                    รูป ${index + 1}/${ids.length}${record.photoLabels?.[index] ? `: <b class="text-white">${this._esc(record.photoLabels[index])}</b>` : ''}
                     ${record.failedItems ? ` · <span class="text-red-300 font-bold">พบ: ${this._esc(record.failedItems)}</span>` : ''}
                     ${record.remark ? ` · “${this._esc(record.remark)}”` : ''}
                 </div>`;
@@ -1074,7 +1069,7 @@ class AppearanceModule {
             }
             const removeBtn = e.target.closest('[data-appearance-remove]');
             if (removeBtn) {
-                this.photos.splice(Number(removeBtn.dataset.appearanceRemove), 1);
+                this.photos[Number(removeBtn.dataset.appearanceRemove)] = null;
                 this._renderPhotos();
                 this._updateFormValidity();
                 return;
@@ -1086,8 +1081,10 @@ class AppearanceModule {
         section?.addEventListener('change', (e) => {
             const input = e.target;
             if (input.type !== 'file') return;
-            const files = input.files;
-            this._addFiles(files).finally(() => { input.value = ''; });
+            const file = input.files?.[0];
+            const slot = Number(input.dataset.appearanceSlot);
+            input.value = '';
+            this._setSlotFile(slot, file);
         });
 
         section?.addEventListener('input', (e) => {
@@ -1117,7 +1114,7 @@ class AppearanceModule {
 
         // กันปิดหน้าโดยไม่ได้ตั้งใจระหว่างมีรูปที่ยังไม่บันทึก
         window.addEventListener('beforeunload', (e) => {
-            if (this.photos.length && !this.isSubmitting) {
+            if (this.photos.some(Boolean) && !this.isSubmitting) {
                 e.preventDefault();
                 e.returnValue = '';
             }
