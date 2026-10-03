@@ -1816,8 +1816,13 @@ class DashboardUI {
 
         // หา shift และ slots สำหรับวันที่คลิก
         const shift = this._getShift(rawLabels.find(t => /^\d{2}:\d{2}$/.test(t)));
-        const slots = shift.slots;
         const isNight = shift === SAMPLING_SCHEDULE.night;
+        // เวลากำหนดตรวจตามรอบของเครื่องที่เลือก (js/schedule.js) — ไม่มีก็ใช้ตารางสุ่มเดิม
+        const machine = document.getElementById('machine-id')?.value;
+        const planned = (typeof InspectionScheduleModule !== 'undefined' && InspectionScheduleModule.instance)
+            ? InspectionScheduleModule.instance.plannedSlotsFor(machine, clickedISO, isNight) : null;
+        const slots = planned || shift.slots;
+        const slotTolerance = planned ? INSPECTION_RULES.ON_TIME_TOL_MIN : 45;
         chart._samplingSlots = slots;
         chart._isNightShift = isNight;
         chart._shiftBreaks = shift.breaks || [];
@@ -1836,7 +1841,7 @@ class DashboardUI {
         chart.update();
 
         const [y, m, d] = clickedISO.split('-');
-        this._showDrillDownBadge(key, `${parseInt(d)}/${parseInt(m)}/${y}`, slots, rawLabels, isNight, shift.breaks || []);
+        this._showDrillDownBadge(key, `${parseInt(d)}/${parseInt(m)}/${y}`, slots, rawLabels, isNight, shift.breaks || [], slotTolerance, !!planned);
     }
 
     _getShift(firstTimeHHMM) {
@@ -1847,7 +1852,7 @@ class DashboardUI {
         return (mins >= 481 && mins < 1201) ? SAMPLING_SCHEDULE.day : SAMPLING_SCHEDULE.night;
     }
 
-    _showDrillDownBadge(key, dateLabel, slots = [], recordTimes = [], isNight = false, breaks = []) {
+    _showDrillDownBadge(key, dateLabel, slots = [], recordTimes = [], isNight = false, breaks = [], tolerance = 45, isPlanned = false) {
         const wrapper = document.getElementById(`chart-wrapper-${key}`);
         if (!wrapper) return;
         wrapper.querySelector('.drilldown-badge')?.remove();
@@ -1863,7 +1868,7 @@ class DashboardUI {
         const recMins = recordTimes.map(toMins).filter(v => v >= 0);
         const slotBadgesHtml = slots.map(slot => {
             const sm = toMins(slot);
-            const covered = recMins.some(rm => Math.abs(rm - sm) <= 45);
+            const covered = recMins.some(rm => Math.abs(rm - sm) <= tolerance);
             const cls = covered
                 ? 'bg-green-100 text-green-700'
                 : 'bg-red-100 text-red-600';
@@ -1882,7 +1887,7 @@ class DashboardUI {
                 <button class="drillback-btn text-xs text-gray-500 hover:text-blue-600 font-medium transition-colors">← ภาพรวม</button>
             </div>
             ${slots.length ? `<div class="flex flex-wrap gap-1 items-center">
-                <span class="text-xs text-gray-400">สุ่มตัวอย่าง:</span>${slotBadgesHtml}
+                <span class="text-xs text-gray-400">${isPlanned ? 'กำหนดตรวจ (±' + tolerance + ' นาที):' : 'สุ่มตัวอย่าง:'}</span>${slotBadgesHtml}
             </div>` : ''}
             ${breaks.length ? `<div class="flex flex-wrap gap-1 items-center">
                 <span class="text-xs text-gray-400">ช่วงพัก:</span>${breakBadgesHtml}
@@ -2265,6 +2270,11 @@ class AppController {
         if (typeof AppearanceModule !== 'undefined') {
             this.appearance = new AppearanceModule(this);
             this.appearance.init(masterData);
+        }
+        // รอบการตรวจวัด — module แยกใน js/schedule.js
+        if (typeof InspectionScheduleModule !== 'undefined') {
+            this.schedule = new InspectionScheduleModule(this);
+            this.schedule.init(masterData);
         }
 
         this._initializing = true;
@@ -2815,10 +2825,14 @@ class AppController {
             };
 
             this.ui.setLoadingState(true);
+            const savedGauge = [];
             for (const value of gaugeResults) {
-                await this.db.save({ ...base, value });
+                const rec = { ...base, value };
+                await this.db.save(rec);
+                savedGauge.push(rec);
             }
             this.ui.setLoadingState(false);
+            this.schedule?.onSaved(savedGauge);
 
             this.ui.resetGaugeSelection();
             this._resetSetupType();
@@ -2845,10 +2859,14 @@ class AppController {
         const specName = this.currentConfig.name?.split(':')[0] || param;
         this.ui.validateAndWarn(values, param, this.currentConfig, PART_SPECS[part], specName, async () => {
             this.ui.setLoadingState(true);
+            const savedValues = [];
             for (const value of values) {
-                await this.db.save({ ...base, value });
+                const rec = { ...base, value };
+                await this.db.save(rec);
+                savedValues.push(rec);
             }
             this.ui.setLoadingState(false);
+            this.schedule?.onSaved(savedValues);
             this.ui.clearInput();
             this._resetSetupType();
             this.refreshDashboard(true, true);

@@ -55,12 +55,16 @@
         <div id="entry-card" class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit lg:sticky lg:top-4 self-start">
             <!-- สลับโหมด: วัดขนาด (Cp/Cpk) กับ ตรวจสภาพภายนอก (Appearance) -->
             <div class="grid grid-cols-2 gap-1 bg-gray-100 p-1 rounded-lg mb-4">
-                <button type="button" data-entry-mode="measure" class="py-2 rounded-md text-sm font-bold transition-colors bg-white shadow text-blue-700">📏 วัดขนาด</button>
+                <button type="button" data-entry-mode="measure" class="relative py-2 rounded-md text-sm font-bold transition-colors bg-white shadow text-blue-700">
+                    📏 วัดขนาด
+                    <span id="measure-tab-badge" class="hidden absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-red-600 text-white text-[11px] leading-5 text-center animate-bounce">0</span>
+                </button>
                 <button type="button" data-entry-mode="appearance" class="relative py-2 rounded-md text-sm font-bold transition-colors text-gray-500">
                     👁️ ตรวจสภาพภายนอก
                     <span id="appearance-tab-badge" class="hidden absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-red-600 text-white text-[11px] leading-5 text-center animate-bounce">0</span>
                 </button>
             </div>
+            <div id="schedule-due-banner" class="hidden mb-3"></div>
             <div id="appearance-due-banner" class="hidden mb-3"></div>
             <h2 id="entry-title" class="text-lg font-bold mb-4 text-gray-700 border-b pb-2">บันทึกข้อมูลการวัด (Data Entry)</h2>
             <form id="data-form" class="space-y-4">
@@ -74,6 +78,8 @@
                     <select id="part-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
                     </select>
                 </div>
+                <!-- รอบการตรวจวัดของเครื่องที่เลือก (สร้างโดย js/schedule.js) -->
+                <div id="schedule-form-info" class="measure-only hidden"></div>
                 <div class="measure-only">
                     <label class="block text-sm font-medium text-gray-600 mb-1">จุดตรวจสอบ (Parameter)</label>
                     <select id="parameter-id" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"></select>
@@ -177,6 +183,23 @@
 
         <!-- ส่วน Dashboard Overview -->
         <div class="lg:col-span-2 space-y-6">
+
+            <!-- รอบการตรวจวัด (Data Entry): สถานะรอบตรวจรายเครื่อง เรียงตามความเร่งด่วน -->
+            <section id="schedule-panel" class="bg-white rounded-xl shadow-sm border overflow-hidden">
+                <div class="flex items-center justify-between gap-2 px-4 py-3 border-b bg-gradient-to-r from-blue-50 to-white flex-wrap">
+                    <div>
+                        <h2 class="text-md font-bold text-gray-800">📏 รอบการตรวจวัด (Data Entry)</h2>
+                        <p class="text-xs text-gray-500">รุ่น 25/32A <b class="text-blue-700">ทุก 2 ชม.</b> · รุ่นอื่น <b class="text-blue-700">ทุก 3 ชม.</b> · ครบทุก Item = 1 รอบ · ตรงเวลา ±15 นาที · ไม่นับเวลาพัก</p>
+                    </div>
+                    <div class="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap">
+                        <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500"></span>ตรวจแล้ว</span>
+                        <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-500"></span>ถึงเวลา</span>
+                        <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500"></span>เลยกำหนด</span>
+                    </div>
+                </div>
+                <div id="schedule-summary" class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-3 text-xs text-gray-600"></div>
+                <div id="schedule-grid" class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 p-4"></div>
+            </section>
 
             <!-- ตรวจสภาพภายนอก (Appearance Inspection): สถานะรอบตรวจรายเครื่อง + ประวัติพร้อมรูป -->
             <section id="appearance-panel" class="bg-white rounded-xl shadow-sm border overflow-hidden">
@@ -319,5 +342,6 @@
     <!-- แก้ไขพาธชี้ไปที่โฟลเดอร์ js -->
     <script src="js/script.js"></script>
     <script src="js/appearance.js"></script>
+    <script src="js/schedule.js"></script>
 </body>
 </html>
