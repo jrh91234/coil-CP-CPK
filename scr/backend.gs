@@ -22,7 +22,7 @@ const Config = {
   // แท็บเก็บผลตรวจ (แยกจากข้อมูลวัดขนาด เพื่อไม่ให้ปนกับการคำนวณ Cp/Cpk)
   APPEARANCE_SHEET_NAME: "Appearance Inspection",
   APPEARANCE_HEADERS: ["Timestamp", "Machine_ID", "Part_ID", "Operator", "Result", "Failed_Items",
-                       "Remark", "Photo_Count", "Photo_URLs", "Photo_IDs", "Checklist_JSON"],
+                       "Remark", "Photo_Count", "Photo_URLs", "Photo_IDs", "Checklist_JSON", "Photo_Labels"],
   // โฟลเดอร์หลักใน Google Drive สำหรับเก็บรูป (ต้องเป็นของบัญชีที่ Deploy สคริปต์)
   APPEARANCE_FOLDER_ID: "1f7v5VWa20ol1zQERJAKGmRmAfJEb9_MA",
   // ค่าเริ่มต้น — แก้ได้จากแท็บ Config ใน Master Sheet (APPEARANCE_INTERVAL_MIN / APPEARANCE_CHECKLIST)
@@ -319,7 +319,8 @@ class AppearancePhotoRepository {
     const folder = this._targetFolder(payload.machine, now);
     const stamp = Utilities.formatDate(now, "Asia/Bangkok", "yyyyMMdd_HHmmss");
     const safe = AppearancePhotoRepository.safeName;
-    const fileName = [stamp, safe(payload.machine), safe(payload.part), safe(payload.result), String(payload.index || 1)]
+    const photoNo = String(payload.index || 1) + (payload.slot ? "-" + safe(payload.slot) : "");
+    const fileName = [stamp, safe(payload.machine), safe(payload.part), safe(payload.result), photoNo]
       .filter(Boolean).join("_") + ".jpg";
 
     const blob = Utilities.newBlob(Utilities.base64Decode(match[2]), match[1], fileName);
@@ -329,7 +330,8 @@ class AppearancePhotoRepository {
       "Machine: " + (payload.machine || ""),
       "Part: " + (payload.part || ""),
       "Operator: " + (payload.operator || ""),
-      "Result: " + (payload.result || "")
+      "Result: " + (payload.result || ""),
+      "Photo: " + (payload.label || payload.slot || payload.index || "")
     ].join("\n"));
 
     // โฟลเดอร์หลักตั้ง "ทุกคนที่มีลิงก์ดูได้" ไว้แล้ว ตั้งซ้ำที่ไฟล์เผื่อการสืบทอดสิทธิ์ไม่ทำงาน
@@ -357,6 +359,11 @@ class AppearanceRepository {
       sheet.appendRow(Config.APPEARANCE_HEADERS);
       sheet.getRange(1, 1, 1, Config.APPEARANCE_HEADERS.length).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
       sheet.setFrozenRows(1);
+    } else if (sheet.getLastColumn() < Config.APPEARANCE_HEADERS.length) {
+      // ชีตเดิมที่สร้างก่อนเพิ่มคอลัมน์ใหม่ — เติมหัวคอลัมน์ที่ขาด
+      const from = sheet.getLastColumn() + 1;
+      const extra = Config.APPEARANCE_HEADERS.slice(from - 1);
+      sheet.getRange(1, from, 1, extra.length).setValues([extra]).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
     }
     return sheet;
   }
@@ -389,7 +396,8 @@ class AppearanceRepository {
       photos.length,
       photos.map(p => p.url || ("https://drive.google.com/file/d/" + p.id + "/view")).join("\n"),
       photos.map(p => p.id).join("\n"),
-      JSON.stringify(checklist.map(c => ({ label: String(c.label), result: c.result })))
+      JSON.stringify(checklist.map(c => ({ label: String(c.label), result: c.result }))),
+      photos.map(p => String(p.label || "")).join("\n")
     ]);
     return { timestamp: ResponseHelper.formatDate(timestamp), ts: timestamp.getTime(), result: result };
   }
@@ -434,6 +442,7 @@ class AppearanceRepository {
         failedItems: String(row[5] || ""),
         remark: String(row[6] || ""),
         photoIds: String(row[9] || "").split(/\s+/).filter(Boolean),
+        photoLabels: String(row[11] || "").split("\n"),
         checklist: checklist
       });
     }
