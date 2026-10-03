@@ -17,11 +17,13 @@ const APPEARANCE_DEFAULTS = {
     HISTORY_PAGE: 12
 };
 
-// ---------- รูปที่ต้องถ่าย (บังคับครบทุกช่อง เรียงตามลำดับนี้) ----------
+// ---------- รูปที่ต้องถ่าย (บังคับครบทุกช่องที่ใช้กับรุ่นนั้น เรียงตามลำดับนี้) ----------
+// onlyParts = ใช้เฉพาะรุ่นที่ระบุ (ไม่ใส่ = ทุกรุ่น)
 const APPEARANCE_PHOTO_SLOTS = [
     { key: 'Single',   label: 'ชิ้นงานเดี่ยว',          hint: 'ถ่ายชิ้นงานเดี่ยว ๆ ให้เห็นผิวงานว่าไม่มีรอย', example: 'images/appearance-example-single.jpg' },
     { key: 'GoNoGo',   label: 'ใส่ Jig Go/NoGo Gauge', hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig Go/NoGo Gauge',   example: 'images/appearance-example-gonogo.jpg' },
-    { key: 'Flatness', label: 'ใส่ Jig ระนาบ',          hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig ระนาบ',           example: 'images/appearance-example-flatness.jpg' }
+    { key: 'Flatness', label: 'ใส่ Jig ระนาบ',          hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig ระนาบ',           example: 'images/appearance-example-flatness.jpg',
+      onlyParts: ['51207080HC-JR (25/32A)'] } // Jig ระนาบมีเฉพาะรุ่น 25/32A
 ];
 
 // ---------- เวลาทำงาน / เวลาพัก ----------
@@ -458,7 +460,7 @@ class AppearanceModule {
 
             <div class="mt-4">
                 <div class="flex items-center justify-between mb-1">
-                    <label class="block text-sm font-medium text-gray-600">รูปถ่ายชิ้นงาน <span class="text-red-500">* ต้องครบ ${APPEARANCE_PHOTO_SLOTS.length} รูป</span></label>
+                    <label class="block text-sm font-medium text-gray-600">รูปถ่ายชิ้นงาน <span id="appearance-photo-required" class="text-red-500">* ต้องครบ ${this._activeSlots().length} รูป</span></label>
                     <span id="appearance-photo-count" class="text-xs font-semibold text-gray-500"></span>
                 </div>
                 <div id="appearance-photo-grid" class="grid grid-cols-3 gap-2"></div>
@@ -499,16 +501,41 @@ class AppearanceModule {
         }).join('');
     }
 
+    // index ของช่องรูปที่ต้องถ่ายสำหรับรุ่นที่เลือกอยู่
+    _activeSlots() {
+        const part = document.getElementById('part-id')?.value || '';
+        return APPEARANCE_PHOTO_SLOTS
+            .map((slot, i) => (!slot.onlyParts || slot.onlyParts.includes(part)) ? i : -1)
+            .filter(i => i >= 0);
+    }
+
+    // เปลี่ยนรุ่น → ล้างรูปของช่องที่ไม่ใช้กับรุ่นนี้ แล้ววาดใหม่
+    _onPartChanged() {
+        const active = this._activeSlots();
+        this.photos = this.photos.map((p, i) => active.includes(i) ? p : null);
+        this._renderFormSectionCount();
+        this._renderPhotos();
+        this._updateFormValidity();
+    }
+
+    _renderFormSectionCount() {
+        const el = document.getElementById('appearance-photo-required');
+        if (el) el.textContent = `* ต้องครบ ${this._activeSlots().length} รูป`;
+    }
+
     _renderPhotos() {
         const grid = document.getElementById('appearance-photo-grid');
         if (!grid) return;
         const spinner = '<svg class="h-5 w-5 animate-spin mb-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>';
 
-        grid.innerHTML = APPEARANCE_PHOTO_SLOTS.map((slot, i) => {
+        const active = this._activeSlots();
+        grid.className = `grid gap-2 ${active.length >= 3 ? 'grid-cols-3' : 'grid-cols-2'}`;
+        grid.innerHTML = active.map((i, n) => {
+            const slot = APPEARANCE_PHOTO_SLOTS[i];
             const p = this.photos[i];
             const head = `
                 <p class="text-[11px] font-bold leading-tight mb-1 ${p ? 'text-green-700' : 'text-gray-700'}" title="${this._esc(slot.hint)}">
-                    ${p ? '✓' : `${i + 1}.`} ${this._esc(slot.label)}
+                    ${p ? '✓' : `${n + 1}.`} ${this._esc(slot.label)}
                 </p>`;
             let body;
             if (p) {
@@ -543,8 +570,8 @@ class AppearanceModule {
         const countEl = document.getElementById('appearance-photo-count');
         if (countEl) {
             const n = this.photos.filter(Boolean).length;
-            countEl.textContent = `${n}/${APPEARANCE_PHOTO_SLOTS.length} รูป`;
-            countEl.className = `text-xs font-semibold ${n === APPEARANCE_PHOTO_SLOTS.length ? 'text-green-600' : 'text-red-500'}`;
+            countEl.textContent = `${n}/${active.length} รูป`;
+            countEl.className = `text-xs font-semibold ${n === active.length ? 'text-green-600' : 'text-red-500'}`;
         }
     }
 
@@ -554,7 +581,7 @@ class AppearanceModule {
         if (!document.getElementById('operator')?.value) missing.push('เลือกพนักงาน');
         const unanswered = this.results.map((r, i) => r ? null : i + 1).filter(Boolean);
         if (unanswered.length) missing.push(`เลือกผลตรวจข้อ ${unanswered.join(', ')}`);
-        const missingPhotos = APPEARANCE_PHOTO_SLOTS.filter((_, i) => !this.photos[i]).map(sl => sl.label);
+        const missingPhotos = this._activeSlots().filter(i => !this.photos[i]).map(i => APPEARANCE_PHOTO_SLOTS[i].label);
         if (missingPhotos.length) missing.push(`ถ่ายรูป: ${missingPhotos.join(', ')}`);
         if (this.results.includes('FAIL') && !document.getElementById('appearance-remark')?.value.trim()) {
             missing.push('กรอกหมายเหตุ (มีข้อที่ไม่ผ่าน)');
@@ -593,6 +620,7 @@ class AppearanceModule {
         const isAppearance = mode === 'appearance';
         document.querySelectorAll('.measure-only').forEach(el => el.classList.toggle('hidden', isAppearance));
         document.getElementById('appearance-input-section')?.classList.toggle('hidden', !isAppearance);
+        if (isAppearance) this._onPartChanged(); // ช่องรูปขึ้นกับรุ่นที่เลือกอยู่ตอนนี้
 
         document.querySelectorAll('[data-entry-mode]').forEach(tab => {
             const active = tab.dataset.entryMode === mode;
@@ -661,7 +689,7 @@ class AppearanceModule {
     }
 
     async _setSlotFile(slotIndex, file) {
-        if (!file || !APPEARANCE_PHOTO_SLOTS[slotIndex]) return;
+        if (!file || !this._activeSlots().includes(slotIndex)) return;
         if (!(file.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/i.test(file.name))) return;
 
         // ต้องเป็นรูปที่เพิ่งถ่ายจากกล้อง — ไฟล์ที่สร้างไว้นานแล้ว (รูปเก่าในเครื่อง) ใช้ไม่ได้
@@ -774,22 +802,24 @@ class AppearanceModule {
         if (btn) btn.disabled = true;
 
         try {
-            const total = APPEARANCE_PHOTO_SLOTS.length;
+            const active = this._activeSlots();
+            const total = active.length;
             const now = new Date();
             const p2 = n => String(n).padStart(2, '0');
             const timeText = `${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} ${p2(now.getHours())}:${p2(now.getMinutes())}`;
 
-            for (let i = 0; i < total; i++) {
+            for (let n = 0; n < total; n++) {
+                const i = active[n];
                 const photo = this.photos[i];
                 // อัปโหลดแล้วด้วยข้อมูลชุดเดิม → ข้ามได้ (กรณีกดบันทึกซ้ำหลังเน็ตหลุด)
                 if (photo.uploaded && photo.uploaded.sig === sig) continue;
-                setBtn(`กำลังอัปโหลดรูป ${i + 1}/${total}...`);
+                setBtn(`กำลังอัปโหลดรูป ${n + 1}/${total}...`);
                 const slot = APPEARANCE_PHOTO_SLOTS[i];
                 const stamped = await this._stamp(photo.dataUrl, {
-                    time: timeText, machine, part, operator, result, index: i + 1, total, label: slot.label
+                    time: timeText, machine, part, operator, result, index: n + 1, total, label: slot.label
                 });
                 const saved = await this.service.uploadPhoto({
-                    dataUrl: stamped, machine, part, operator, result, index: i + 1, slot: slot.key, label: slot.label
+                    dataUrl: stamped, machine, part, operator, result, index: n + 1, slot: slot.key, label: slot.label
                 });
                 photo.uploaded = { id: saved.id, url: saved.url, sig };
                 this.localThumbs[saved.id] = stamped;
@@ -797,10 +827,10 @@ class AppearanceModule {
             }
 
             setBtn('กำลังบันทึกผลตรวจ...');
-            const photos = this.photos.map((p, i) => ({ id: p.uploaded.id, url: p.uploaded.url, label: APPEARANCE_PHOTO_SLOTS[i].label }));
+            const photos = active.map(i => ({ id: this.photos[i].uploaded.id, url: this.photos[i].uploaded.url, label: APPEARANCE_PHOTO_SLOTS[i].label }));
             const saved = await this.service.addRecord({ machine, part, operator, remark, checklist, photos });
 
-            this._rememberHashes(this.photos.map(p => p.hash));
+            this._rememberHashes(active.map(i => this.photos[i].hash));
             const ts = Number(saved?.ts) || Date.now();
             this.lastByMachine[machine] = { ts, result, operator };
             this.lastActivityByMachine[machine] = Math.max(Number(this.lastActivityByMachine[machine]) || 0, ts);
@@ -824,7 +854,7 @@ class AppearanceModule {
         } catch (err) {
             console.error('Appearance submit error:', err);
             const done = this.photos.filter(p => p && p.uploaded && p.uploaded.sig === sig).length;
-            alert(`บันทึกไม่สำเร็จ: ${err.message}\n\nรูปที่อัปโหลดแล้ว ${done}/${APPEARANCE_PHOTO_SLOTS.length} รูปจะไม่ถูกส่งซ้ำ — ตรวจสอบอินเทอร์เน็ตแล้วกดบันทึกอีกครั้ง`);
+            alert(`บันทึกไม่สำเร็จ: ${err.message}\n\nรูปที่อัปโหลดแล้ว ${done}/${this._activeSlots().length} รูปจะไม่ถูกส่งซ้ำ — ตรวจสอบอินเทอร์เน็ตแล้วกดบันทึกอีกครั้ง`);
         } finally {
             this.isSubmitting = false;
             this._updateFormValidity();
@@ -1130,8 +1160,9 @@ class AppearanceModule {
         });
 
         // ฟิลด์ที่ใช้ร่วมกับฟอร์มวัดขนาด
+        document.getElementById('part-id')?.addEventListener('change', () => this._onPartChanged());
         document.getElementById('machine-id')?.addEventListener('change', () => {
-            this._updateFormValidity();
+            this._onPartChanged();
             this._renderStatus();
             this._renderHistory();
         });
