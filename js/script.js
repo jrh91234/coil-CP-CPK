@@ -2305,7 +2305,7 @@ class AppController {
     bindEvents() {
         this.ui.elements.machineSelect.addEventListener('change', () => this.handleMachineChange());
         this.ui.elements.partSelect.addEventListener('change', () => this.handlePartChange());
-        this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange());
+        this.ui.elements.paramSelect.addEventListener('change', () => this.handleParamChange(true));
         document.getElementById('data-form').addEventListener('submit', (e) => this.handleSubmit(e));
         document.getElementById('add-value-btn').addEventListener('click', () => this.addMeasuredValueRow());
         document.getElementById('settings-btn')?.addEventListener('click', () => this.openSettingsGate());
@@ -2763,7 +2763,7 @@ class AppController {
         if (specs) {
             this.ui.setupAllCharts(part, specs);
             this.ui.renderParameterOptions(specs);
-            this.handleParamChange();
+            this.handleParamChange(false);
         } else {
             this.ui.elements.paramSelect.innerHTML = '<option value="">-- กรุณาเลือกรุ่นชิ้นงาน --</option>';
             this.ui.elements.specDisplay.innerHTML = '';
@@ -2771,7 +2771,8 @@ class AppController {
         }
     }
 
-    handleParamChange() {
+    // shouldScroll = false เมื่อมาจากการเลือกเครื่อง/รุ่น — ไม่เลื่อนหน้าไปที่กราฟ
+    handleParamChange(shouldScroll = true) {
         const part = this.ui.elements.partSelect.value;
         const param = this.ui.elements.paramSelect.value;
 
@@ -2783,7 +2784,7 @@ class AppController {
         this.ui.updateSpecInfo(spec);
         this.ui.setGaugeMode(spec.type === 'gauge');
         this.ui.clearInput();
-        this.refreshDashboard(true, true);
+        this.refreshDashboard(shouldScroll, true);
     }
 
     _resetSetupType() {
