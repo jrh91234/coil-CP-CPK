@@ -1068,7 +1068,7 @@ class DashboardUI {
             input.value = '';
             input.placeholder = `ชิ้นที่ ${i + 1}...`;
         });
-        container.querySelector('.measured-value-input')?.focus();
+        container.querySelector('.measured-value-input')?.focus({ preventScroll: true });
 
         this.resetGaugeSelection();
     }
