@@ -293,6 +293,11 @@ class InMemoryService {
     async verifySettingsPassword(password) {
         return password === 'Cpk/cp';
     }
+    async saveInspectionSettings(password, settings) {
+        if (password !== 'Cpk/cp') throw new Error('รหัสไม่ถูกต้อง');
+        this.inspectionSettings = settings;
+        return settings;
+    }
     async getAll() { return this.data; }
     getLocalData() { return this.data; }
     async getMasterData() {
@@ -361,6 +366,18 @@ class GoogleSheetService {
         const result = await response.json();
         if (!result.success) throw new Error(result.error || 'Password verification failed');
         return !!result.data?.ok;
+    }
+
+    // บันทึกค่าตั้งรอบการตรวจ — server ตรวจรหัส + ความถูกต้องของค่าอีกครั้ง
+    async saveInspectionSettings(password, settings, editor, changes) {
+        const response = await fetch(this.url, {
+            method: 'POST',
+            body: JSON.stringify({ action: "save_inspection_settings", password, settings, editor, changes }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+        });
+        const result = await response.json();
+        if (!result.success) throw new Error(result.error || 'Save settings failed');
+        return result.data?.settings || settings;
     }
 
     /**
@@ -2262,6 +2279,12 @@ class AppController {
         const masterData = await this.db.getMasterData();
         this.machineAssignments = masterData.machineAssignments || {};
 
+        // ค่าตั้งรอบการตรวจ (js/settings.js) ต้องใช้ก่อน module รอบตรวจ init
+        if (typeof InspectionSettings !== 'undefined') {
+            InspectionSettings.apply(masterData.inspectionSettings);
+            InspectionSettings.watch(this.db);
+        }
+
         this.ui.populateOperators(masterData.operators || []);
         this.ui.populateMachines(this.machineAssignments);
         this.ui.populateParts(PART_SPECS);
@@ -2447,8 +2470,7 @@ class AppController {
                     errorEl.classList.remove('hidden');
                     return;
                 }
-                submitBtn.textContent = 'กำลังโหลดข้อมูล...';
-                await this.showSuspiciousDataManager();
+                this.showSettingsMenu(pass);
             } catch (err) {
                 errorEl.textContent = 'ตรวจรหัสผ่าน cloud ไม่สำเร็จ: ' + err.message;
                 errorEl.classList.remove('hidden');
@@ -2456,6 +2478,40 @@ class AppController {
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'เข้าสู่เมนู';
             }
+        };
+    }
+
+    // เมนูหลังผ่านรหัส: จัดการข้อมูลน่าสงสัย / ตั้งค่ารอบการตรวจ
+    showSettingsMenu(password) {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        const item = 'w-full text-left px-4 py-3 border rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div class="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center justify-between">
+                    <h3 class="text-sm font-bold text-blue-900">ตั้งค่า / จัดการข้อมูล</h3>
+                    <button id="settings-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none" type="button">&times;</button>
+                </div>
+                <div class="px-5 py-4 space-y-2">
+                    <button type="button" id="settings-menu-data" class="${item}">
+                        <span class="block text-sm font-bold text-gray-800">🗂 จัดการข้อมูลที่น่าสงสัย</span>
+                        <span class="block text-xs text-gray-500">แก้ไข / ลบข้อมูลการวัดที่ผิดปกติ</span>
+                    </button>
+                    <button type="button" id="settings-menu-inspection" class="${item}">
+                        <span class="block text-sm font-bold text-gray-800">⚙ ตั้งค่ารอบการตรวจ</span>
+                        <span class="block text-xs text-gray-500">รอบการตรวจวัด (Data Entry) และตรวจสภาพภายนอก (Appearance)</span>
+                    </button>
+                </div>
+            </div>
+        `;
+        document.getElementById('settings-close').onclick = () => modal.remove();
+        document.getElementById('settings-menu-data').onclick = async (e) => {
+            e.currentTarget.disabled = true;
+            e.currentTarget.querySelector('span').textContent = 'กำลังโหลดข้อมูล...';
+            await this.showSuspiciousDataManager();
+        };
+        document.getElementById('settings-menu-inspection').onclick = () => {
+            new InspectionSettingsEditor(this, password).open();
         };
     }
 

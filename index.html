@@ -189,7 +189,7 @@
                 <div class="flex items-center justify-between gap-2 px-4 py-3 border-b bg-gradient-to-r from-blue-50 to-white flex-wrap">
                     <div>
                         <h2 class="text-md font-bold text-gray-800">📏 รอบการตรวจวัด (Data Entry)</h2>
-                        <p class="text-xs text-gray-500">รุ่น 25/32A <b class="text-blue-700">ทุก 2 ชม.</b> · รุ่นอื่น <b class="text-blue-700">ทุก 3 ชม.</b> · ครบทุก Item = 1 รอบ · ตรงเวลา ±15 นาที · ไม่นับเวลาพัก</p>
+                        <p id="schedule-rules-label" class="text-xs text-gray-500">รุ่น 25/32A <b class="text-blue-700">ทุก 2 ชม.</b> · รุ่นอื่น <b class="text-blue-700">ทุก 3 ชม.</b> · ครบทุก Item = 1 รอบ · ตรงเวลา ±15 นาที · ไม่นับเวลาพัก</p>
                     </div>
                     <div class="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap">
                         <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500"></span>ตรวจแล้ว</span>
@@ -206,7 +206,7 @@
                 <div class="flex items-center justify-between gap-2 px-4 py-3 border-b bg-gradient-to-r from-indigo-50 to-white flex-wrap">
                     <div>
                         <h2 class="text-md font-bold text-gray-800">👁️ ตรวจสภาพภายนอก (Appearance)</h2>
-                        <p class="text-xs text-gray-500">บิดงอ/เสียรูป · รอยขีดข่วน — รอบตรวจ <span id="appearance-interval-label" class="font-bold text-indigo-700">ทุก 60 นาที</span></p>
+                        <p class="text-xs text-gray-500"><span id="appearance-checklist-label">บิดงอ/เสียรูป · รอยขีดข่วน</span> — รอบตรวจ <span id="appearance-interval-label" class="font-bold text-indigo-700">ทุก 60 นาที</span></p>
                     </div>
                     <div class="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap">
                         <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500"></span>ตรวจแล้ว</span>
@@ -343,5 +343,6 @@
     <script src="js/script.js"></script>
     <script src="js/appearance.js"></script>
     <script src="js/schedule.js"></script>
+    <script src="js/settings.js"></script>
 </body>
 </html>

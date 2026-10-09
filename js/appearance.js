@@ -5,7 +5,9 @@
 // =====================================================
 
 const APPEARANCE_DEFAULTS = {
+    // ค่าเริ่มต้น — ผู้มีรหัสแก้ได้จากเมนู ⚙ ตั้งค่ารอบการตรวจ (js/settings.js)
     INTERVAL_MIN: 60,                                   // แก้ได้จาก Config: APPEARANCE_INTERVAL_MIN
+    PART_INTERVAL_MIN: {},                              // ความถี่แยกตามรุ่น (ไม่ใส่ = ใช้ INTERVAL_MIN)
     CHECKLIST: ['บิดงอ / เสียรูป', 'รอยขีดข่วนที่ตัวงาน'], // แก้ได้จาก Config: APPEARANCE_CHECKLIST
     PHOTO_MAX_SIDE: 1920,     // ขนาดปกติ (ด้านยาวสุด px)
     PHOTO_QUALITY: 0.85,
@@ -18,7 +20,7 @@ const APPEARANCE_DEFAULTS = {
 };
 
 // ---------- รูปที่ต้องถ่าย (บังคับครบทุกช่องที่ใช้กับรุ่นนั้น เรียงตามลำดับนี้) ----------
-// onlyParts = ใช้เฉพาะรุ่นที่ระบุ (ไม่ใส่ = ทุกรุ่น)
+// onlyParts = ใช้เฉพาะรุ่นที่ระบุ (ไม่ใส่/ว่าง = ทุกรุ่น) · enabled: false = ปิดช่องนี้ (ตั้งจากเมนูตั้งค่า)
 const APPEARANCE_PHOTO_SLOTS = [
     { key: 'Single',   label: 'ชิ้นงานเดี่ยว',          hint: 'ถ่ายชิ้นงานเดี่ยว ๆ ให้เห็นผิวงานว่าไม่มีรอย', example: 'images/appearance-example-single.jpg' },
     { key: 'GoNoGo',   label: 'ใส่ Jig Go/NoGo Gauge', hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig Go/NoGo Gauge',   example: 'images/appearance-example-gonogo.jpg' },
@@ -351,6 +353,11 @@ class AppearanceModule {
         );
     }
 
+    // ความถี่ตรวจของรุ่น (ตั้งแยกรุ่นได้ ไม่ตั้ง = ค่าเริ่มต้น)
+    _intervalFor(part) {
+        return APPEARANCE_DEFAULTS.PART_INTERVAL_MIN[part] || this.intervalMin;
+    }
+
     _machineStatus(machine, now = Date.now()) {
         const last = this.lastByMachine[machine] || null;
         const seg = WorkTime.currentSegment(now);
@@ -365,7 +372,7 @@ class AppearanceModule {
         const checkedThisShift = last && last.ts >= seg.anchor;
         const from = checkedThisShift ? last.ts : seg.anchor;
         const elapsedMin = WorkTime.workMinutes(from, now);
-        const remainMin = this.intervalMin - elapsedMin;
+        const remainMin = this._intervalFor(this.controller.machineAssignments?.[machine]) - elapsedMin;
         const base = { last, checkedThisShift, from, elapsedMin, remainMin, brk };
         if (remainMin < 0) return { level: 'overdue', ...base };
         if (remainMin <= APPEARANCE_DEFAULTS.SOON_MIN) return { level: 'soon', ...base };
@@ -386,7 +393,10 @@ class AppearanceModule {
         document.title = overdue.length ? `(⚠${overdue.length}) ${this.baseTitle}` : this.baseTitle;
 
         const intervalEl = document.getElementById('appearance-interval-label');
-        if (intervalEl) intervalEl.textContent = `ทุก ${this._formatDuration(this.intervalMin)}`;
+        if (intervalEl) {
+            const part = this.controller.machineAssignments?.[this._currentMachine()];
+            intervalEl.textContent = `ทุก ${this._formatDuration(this._intervalFor(part))}`;
+        }
 
         // แบนเนอร์ในฟอร์ม (สำคัญบนมือถือ ที่แผงสถานะอยู่ด้านล่าง)
         const banner = document.getElementById('appearance-due-banner');
@@ -520,7 +530,7 @@ class AppearanceModule {
     _activeSlots() {
         const part = document.getElementById('part-id')?.value || '';
         return APPEARANCE_PHOTO_SLOTS
-            .map((slot, i) => (!slot.onlyParts || slot.onlyParts.includes(part)) ? i : -1)
+            .map((slot, i) => (slot.enabled !== false && (!slot.onlyParts?.length || slot.onlyParts.includes(part))) ? i : -1)
             .filter(i => i >= 0);
     }
 
@@ -891,7 +901,6 @@ class AppearanceModule {
     // นับรอบที่ควรตรวจ vs รอบที่ตรวจจริง ต่อเครื่อง ต่อช่วงทำงาน (เวลาปกติ / OT / กะดึก)
     // นับเฉพาะช่วงที่เครื่องมีการตรวจ และหักเวลาพักออก — วันหยุด/ไม่มี OT จึงไม่ถูกนับเป็นรอบที่ขาด
     _coverage(records) {
-        const intervalMin = this.intervalMin;
         const now = Date.now();
         const groups = {};
         records.forEach(r => {
@@ -899,11 +908,11 @@ class AppearanceModule {
             const seg = WorkTime.segments(dayStart).find(sg => r.ts >= sg.window[0] && r.ts < sg.window[1]);
             if (!seg) return;
             const key = `${r.machine}|${dayStart}|${seg.kind}`;
-            if (!groups[key]) groups[key] = { seg, times: [] };
+            if (!groups[key]) groups[key] = { seg, times: [], intervalMin: this._intervalFor(r.part) };
             groups[key].times.push(r.ts);
         });
         let expected = 0, covered = 0;
-        Object.values(groups).forEach(({ seg, times }) => {
+        Object.values(groups).forEach(({ seg, times, intervalMin }) => {
             const [start, end] = seg.count;
             const slots = Math.max(1, Math.ceil(WorkTime.workMinutes(start, Math.min(now, end)) / intervalMin));
             const hit = new Set(times.map(t =>
