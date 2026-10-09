@@ -6,6 +6,7 @@
 // - ตรวจครบทุก Item ของรุ่นนั้น = 1 รอบ/เครื่อง
 // - ตรงเวลา = กำหนด ±15 นาที · ตรวจก่อนกำหนดไม่เกิน 30 นาที (เช่น เปลี่ยนม้วน) นับเป็นรอบนั้น
 // คำนวณจากเวลาที่บันทึกข้อมูลการวัด ไม่ต้องเก็บข้อมูลเพิ่มใน Sheet
+// ค่าด้านล่างเป็นค่าเริ่มต้น — ผู้มีรหัสแก้ได้จากเมนู ⚙ ตั้งค่ารอบการตรวจ (js/settings.js)
 // =====================================================
 
 const INSPECTION_RULES = {
@@ -23,6 +24,13 @@ const INSPECTION_RULES = {
 const InspectionPlanner = {
     intervalFor(part) {
         return INSPECTION_RULES.PART_INTERVAL_MIN[part] || INSPECTION_RULES.DEFAULT_INTERVAL_MIN;
+    },
+
+    intervalLabel(part) {
+        const m = this.intervalFor(part);
+        const h = Math.floor(m / 60), r = m % 60;
+        if (m < 60) return `ทุก ${m} นาที`;
+        return r ? `ทุก ${h} ชม. ${r} นาที` : `ทุก ${h} ชม.`;
     },
 
     // กะที่ ts อยู่: กะเช้า 08:00–20:00 (รวม OT) / กะดึก 20:00–08:00
@@ -378,7 +386,7 @@ class InspectionScheduleModule {
             const st = style[s.level] || style.idle;
             const { main, sub } = this._describe(s, now);
             const part = this._partOf(s.machine);
-            const freq = `ทุก ${InspectionPlanner.intervalFor(part) / 60} ชม.`;
+            const freq = InspectionPlanner.intervalLabel(part);
             const missing = s.inProgress
                 ? `<p class="text-[10px] text-blue-700 font-semibold truncate">กำลังตรวจ · ขาด ${s.inProgress.missing.map(k => this._itemLabel(k)).join(', ')}</p>` : '';
             const missed = s.missed ? `<span class="text-[10px] font-bold bg-red-600 text-white px-1.5 py-0.5 rounded">ขาด ${s.missed} รอบ</span>` : '';
@@ -452,7 +460,7 @@ class InspectionScheduleModule {
             <div class="border rounded-lg px-3 py-2 ${color}">
                 <div class="flex items-center justify-between gap-2">
                     <p class="text-xs font-bold">📏 ${main}</p>
-                    <span class="text-[10px] opacity-75">ทุก ${InspectionPlanner.intervalFor(part) / 60} ชม.</span>
+                    <span class="text-[10px] opacity-75">${InspectionPlanner.intervalLabel(part)}</span>
                 </div>
                 ${sub ? `<p class="text-[11px] opacity-80">${sub}</p>` : ''}
                 <div class="mt-2">

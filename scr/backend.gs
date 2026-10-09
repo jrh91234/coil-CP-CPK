@@ -28,7 +28,15 @@ const Config = {
   // ค่าเริ่มต้น — แก้ได้จากแท็บ Config ใน Master Sheet (APPEARANCE_INTERVAL_MIN / APPEARANCE_CHECKLIST)
   APPEARANCE_DEFAULT_INTERVAL_MIN: 60,
   APPEARANCE_DEFAULT_CHECKLIST: ["บิดงอ / เสียรูป", "รอยขีดข่วนที่ตัวงาน"],
-  APPEARANCE_MAX_PHOTOS: 3
+  APPEARANCE_MAX_PHOTOS: 3,
+
+  // --- ตั้งค่ารอบการตรวจ (Data Entry + Appearance) จากหน้าเว็บ ---
+  // เก็บเป็น JSON ในแท็บ Config ของ Master Sheet (key นี้) — แก้ได้เฉพาะผู้มีรหัส SETTINGS_PASSWORD
+  INSPECTION_SETTINGS_KEY: "INSPECTION_SETTINGS",
+  // แท็บใน Master Sheet บันทึกประวัติการแก้ค่าตั้ง (ใคร / เมื่อไร / เปลี่ยนอะไร)
+  SETTINGS_LOG_SHEET_NAME: "Settings Log",
+  SETTINGS_LOG_HEADERS: ["Timestamp", "Editor", "Changes", "Settings_JSON"],
+  APPEARANCE_PHOTO_SLOT_KEYS: ["Single", "GoNoGo", "Flatness"]
 };
 
 /**
@@ -473,6 +481,144 @@ class AppearanceRepository {
   }
 }
 
+
+// --- Inspection Settings: ค่าตั้งรอบการตรวจ เก็บเป็น JSON 1 แถวในแท็บ Config ของ Master Sheet ---
+const InspectionSettings = {
+  // ช่วงค่าที่ยอมรับ (นาที / วินาที) — กันพิมพ์ผิดจนรอบตรวจใช้งานไม่ได้
+  RANGES: {
+    "dataEntry.defaultIntervalMin": [30, 720],
+    "dataEntry.partIntervalMin": [30, 720],
+    "dataEntry.firstCheckWithinMin": [10, 240],
+    "dataEntry.onTimeTolMin": [0, 120],
+    "dataEntry.earlyAcceptMin": [0, 120],
+    "dataEntry.sessionGapMin": [5, 120],
+    "appearance.intervalMin": [15, 720],
+    "appearance.partIntervalMin": [15, 720],
+    "appearance.photoMaxAgeSec": [30, 1800],
+    "appearance.soonMin": [0, 60]
+  },
+
+  _num(path, value) {
+    const n = Number(value);
+    const range = this.RANGES[path];
+    if (!isFinite(n) || Math.round(n) !== n || n < range[0] || n > range[1]) {
+      throw new Error("ค่า " + path + " ต้องเป็นจำนวนเต็ม " + range[0] + "–" + range[1]);
+    }
+    return n;
+  },
+
+  _text(value, max) {
+    const s = String(value == null ? "" : value).trim();
+    if (s.length > max) throw new Error("ข้อความยาวเกิน " + max + " ตัวอักษร: " + s.slice(0, 30) + "…");
+    return s;
+  },
+
+  _partMap(path, raw) {
+    const out = {};
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+    Object.keys(raw).forEach(part => {
+      const name = this._text(part, 100);
+      if (name) out[name] = this._num(path, raw[part]);
+    });
+    return out;
+  },
+
+  // ตรวจและจัดรูปค่าที่ส่งมาจากหน้าเว็บ — throw ถ้าค่าไม่ถูกต้อง
+  normalize(raw) {
+    if (!raw || typeof raw !== "object") throw new Error("ไม่มีข้อมูลค่าตั้ง");
+    const de = raw.dataEntry || {};
+    const ap = raw.appearance || {};
+
+    const checklist = (Array.isArray(ap.checklist) ? ap.checklist : []).map(c => this._text(c, 100)).filter(Boolean);
+    if (checklist.length < 1) throw new Error("ต้องมีหัวข้อตรวจสภาพภายนอกอย่างน้อย 1 ข้อ");
+    if (checklist.length > 20) throw new Error("หัวข้อตรวจสภาพภายนอกได้สูงสุด 20 ข้อ");
+    if (new Set(checklist).size !== checklist.length) throw new Error("หัวข้อตรวจสภาพภายนอกซ้ำกัน");
+
+    const photoSlots = {};
+    const rawSlots = ap.photoSlots || {};
+    Config.APPEARANCE_PHOTO_SLOT_KEYS.forEach(key => {
+      const slot = rawSlots[key] || {};
+      photoSlots[key] = {
+        enabled: slot.enabled !== false,
+        onlyParts: (Array.isArray(slot.onlyParts) ? slot.onlyParts : []).map(p => this._text(p, 100)).filter(Boolean)
+      };
+    });
+    if (!Config.APPEARANCE_PHOTO_SLOT_KEYS.some(k => photoSlots[k].enabled)) {
+      throw new Error("ต้องเปิดใช้รูปที่ต้องถ่ายอย่างน้อย 1 ช่อง");
+    }
+
+    return {
+      dataEntry: {
+        defaultIntervalMin: this._num("dataEntry.defaultIntervalMin", de.defaultIntervalMin),
+        partIntervalMin: this._partMap("dataEntry.partIntervalMin", de.partIntervalMin),
+        firstCheckWithinMin: this._num("dataEntry.firstCheckWithinMin", de.firstCheckWithinMin),
+        onTimeTolMin: this._num("dataEntry.onTimeTolMin", de.onTimeTolMin),
+        earlyAcceptMin: this._num("dataEntry.earlyAcceptMin", de.earlyAcceptMin),
+        sessionGapMin: this._num("dataEntry.sessionGapMin", de.sessionGapMin)
+      },
+      appearance: {
+        intervalMin: this._num("appearance.intervalMin", ap.intervalMin),
+        partIntervalMin: this._partMap("appearance.partIntervalMin", ap.partIntervalMin),
+        checklist: checklist,
+        photoSlots: photoSlots,
+        photoMaxAgeSec: this._num("appearance.photoMaxAgeSec", ap.photoMaxAgeSec),
+        soonMin: this._num("appearance.soonMin", ap.soonMin)
+      }
+    };
+  },
+
+  _configSheet(ssMaster) {
+    const sheet = ssMaster.getSheetByName("Config");
+    if (!sheet) throw new Error("ไม่พบแท็บ Config ใน Master Sheet");
+    return sheet;
+  },
+
+  // อ่านค่าจากแถวใน Config (null = ยังไม่เคยตั้ง → หน้าเว็บใช้ค่าเริ่มต้นในโค้ด)
+  parse(text) {
+    if (!text) return null;
+    try {
+      const obj = JSON.parse(text);
+      return (obj && obj.dataEntry && obj.appearance) ? obj : null;
+    } catch (err) {
+      return null;
+    }
+  },
+
+  // บันทึกค่าใหม่ + เขียนประวัติลงแท็บ Settings Log
+  save(raw, editor, changes) {
+    const settings = this.normalize(raw);
+    const who = this._text(editor, 100);
+    if (!who) throw new Error("กรุณาระบุชื่อผู้แก้ไข");
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    try {
+      const ssMaster = SpreadsheetApp.openById(Config.MASTER_SHEET_ID);
+      const sheet = this._configSheet(ssMaster);
+      const json = JSON.stringify(settings);
+      const keys = sheet.getLastRow() > 0 ? sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues() : [];
+      const idx = keys.findIndex(r => String(r[0]).trim() === Config.INSPECTION_SETTINGS_KEY);
+      if (idx >= 0) {
+        sheet.getRange(idx + 1, 2).setValue(json);
+      } else {
+        sheet.appendRow([Config.INSPECTION_SETTINGS_KEY, json]);
+      }
+
+      let log = ssMaster.getSheetByName(Config.SETTINGS_LOG_SHEET_NAME);
+      if (!log) {
+        log = ssMaster.insertSheet(Config.SETTINGS_LOG_SHEET_NAME);
+        log.appendRow(Config.SETTINGS_LOG_HEADERS);
+        log.getRange(1, 1, 1, Config.SETTINGS_LOG_HEADERS.length).setFontWeight("bold").setBackground(Config.HEADER_COLOR);
+        log.setFrozenRows(1);
+      }
+      log.appendRow([new Date(), who, this._text(changes, 5000) || "-", json]);
+    } finally {
+      lock.releaseLock();
+    }
+    return settings;
+  }
+};
+
 /**
  * =========================================================================
  * MODULE 4: CONTROLLERS (API Entry Points)
@@ -493,6 +639,15 @@ function doPost(e) {
     if (postData.action === "verify_settings_password") {
       const ok = String(postData.password || "") === Config.SETTINGS_PASSWORD;
       return ResponseHelper.success({ ok });
+    }
+
+    if (postData.action === "save_inspection_settings") {
+      // ตรวจรหัสฝั่ง server ทุกครั้ง — ซ่อนเมนูบนหน้าเว็บอย่างเดียวกันคนเรียก API ตรงไม่ได้
+      if (String(postData.password || "") !== Config.SETTINGS_PASSWORD) {
+        return ResponseHelper.error("รหัสไม่ถูกต้อง");
+      }
+      const saved = InspectionSettings.save(postData.settings, postData.editor, postData.changes);
+      return ResponseHelper.success({ settings: saved }, "Settings saved");
     }
 
     if (postData.action === "delete_record") {
@@ -592,6 +747,7 @@ function doGet(e) {
       let machineAssignments = {};
       let appearanceIntervalMin = Config.APPEARANCE_DEFAULT_INTERVAL_MIN;
       let appearanceChecklist = Config.APPEARANCE_DEFAULT_CHECKLIST;
+      let inspectionSettings = null;
       
       if (configSheet) {
         const data = configSheet.getDataRange().getValues();
@@ -623,17 +779,28 @@ function doGet(e) {
             }
             items = (Array.isArray(items) ? items : []).map(s => String(s).trim()).filter(Boolean);
             if (items.length > 0) appearanceChecklist = items;
+          } else if (key === Config.INSPECTION_SETTINGS_KEY) {
+            // ค่าตั้งจากหน้าเว็บ (อ่าน val จาก data ตรง ๆ ไม่ใช้ toString ของ cell ว่าง)
+            inspectionSettings = InspectionSettings.parse(String(data[i][1] || "").trim());
           } else if (key.startsWith("Machine_")) {
             // จับคู่เครื่องจักร -> รุ่นชิ้นงาน
             machineAssignments[key] = val;
           }
         }
       }
+      // ค่าที่ตั้งจากหน้าเว็บมาก่อนค่าแบบเดิม (APPEARANCE_INTERVAL_MIN / APPEARANCE_CHECKLIST)
+      if (inspectionSettings) {
+        appearanceIntervalMin = inspectionSettings.appearance.intervalMin || appearanceIntervalMin;
+        if (Array.isArray(inspectionSettings.appearance.checklist) && inspectionSettings.appearance.checklist.length) {
+          appearanceChecklist = inspectionSettings.appearance.checklist;
+        }
+      }
       return ResponseHelper.success({
         operators: operators,
         machineAssignments: machineAssignments,
         appearanceIntervalMin: appearanceIntervalMin,
-        appearanceChecklist: appearanceChecklist
+        appearanceChecklist: appearanceChecklist,
+        inspectionSettings: inspectionSettings
       });
     }
 
