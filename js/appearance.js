@@ -1,7 +1,7 @@
 // =====================================================
 // APPEARANCE INSPECTION (ตรวจสภาพภายนอก)
 // ตรวจบิดงอ/เสียรูป, รอยขีดข่วน ฯลฯ ตามรอบเวลา + บังคับแนบรูป (เก็บใน Google Drive)
-// ถ้ามีรอบตรวจ Data Entry (ครบทุก Item) ภายใน ±15 นาทีจากเวลากำหนด → ยกรอบ Appearance นั้นให้ (นับรอบถัดไปจากเวลาตรวจ Data Entry)
+// ถ้ามีรอบตรวจ Data Entry (ครบทุก Item) ภายใน ±15 นาที (ตั้งได้จากเมนูตั้งค่า) จากเวลากำหนด → ยกรอบ Appearance นั้นให้ (นับรอบถัดไปจากเวลาตรวจ Data Entry)
 // แยกจาก PART_SPECS / Cp-Cpk ทั้งหมด เพื่อไม่ให้กระทบการคำนวณเดิม
 // =====================================================
 
@@ -15,7 +15,7 @@ const APPEARANCE_DEFAULTS = {
     PHOTO_MAX_AGE_SEC: 120,   // รูปต้องเพิ่งถ่าย (กันเอารูปเก่าในเครื่องมาใช้)
     PHOTO_HASH_KEEP: 300,     // จำลายนิ้วมือรูปที่เคยส่งไว้กี่รูป (กันส่งรูปเดิมซ้ำ)
     SOON_MIN: 10,             // เหลือน้อยกว่านี้ (นาที) = ใกล้ถึงรอบ
-    DATA_ENTRY_WAIVE_MIN: 15, // มีรอบตรวจ Data Entry ภายใน ±นี้ (นาที) จากกำหนด = ยกรอบ Appearance นั้นให้
+    DATA_ENTRY_WAIVE_MIN: 15, // (0 = ปิด) มีรอบตรวจ Data Entry ภายใน ±นี้ (นาที) จากกำหนด = ยกรอบ Appearance นั้นให้
     RENDER_TICK_MS: 30 * 1000,
     SERVER_POLL_MS: 3 * 60 * 1000,
     HISTORY_PAGE: 12
@@ -371,7 +371,7 @@ class AppearanceModule {
         for (let i = 0; i < 200; i++) {
             const due = WorkTime.addWorkMinutes(from, intervalMin);
             const nextAp = ap.find(t => t > from);
-            const waiver = de.find(t => t > from && Math.abs(t - due) <= tol);
+            const waiver = tol > 0 ? de.find(t => t > from && Math.abs(t - due) <= tol) : undefined; // 0 = ปิด
             if (waiver !== undefined && (nextAp === undefined || waiver < nextAp)) {
                 out.push({ ts: waiver, waived: true, due });
                 from = waiver;

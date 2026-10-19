@@ -17,7 +17,8 @@ const INSPECTION_SETTINGS_RANGES = {
     'appearance.intervalMin': [15, 720],
     'appearance.partIntervalMin': [15, 720],
     'appearance.photoMaxAgeSec': [30, 1800],
-    'appearance.soonMin': [0, 60]
+    'appearance.soonMin': [0, 60],
+    'appearance.dataEntryWaiveMin': [0, 60]
 };
 
 const InspectionSettings = {
@@ -46,7 +47,8 @@ const InspectionSettings = {
                 checklist: [...APPEARANCE_DEFAULTS.CHECKLIST],
                 photoSlots: slots,
                 photoMaxAgeSec: APPEARANCE_DEFAULTS.PHOTO_MAX_AGE_SEC,
-                soonMin: APPEARANCE_DEFAULTS.SOON_MIN
+                soonMin: APPEARANCE_DEFAULTS.SOON_MIN,
+                dataEntryWaiveMin: APPEARANCE_DEFAULTS.DATA_ENTRY_WAIVE_MIN
             }
         };
     },
@@ -69,6 +71,7 @@ const InspectionSettings = {
         Object.entries(ap.partIntervalMin).forEach(([p, v]) => num('appearance.partIntervalMin', v, `Appearance: ความถี่ของ ${p}`));
         num('appearance.photoMaxAgeSec', ap.photoMaxAgeSec, 'Appearance: อายุรูปสูงสุด');
         num('appearance.soonMin', ap.soonMin, 'Appearance: แจ้งใกล้ถึงรอบ');
+        num('appearance.dataEntryWaiveMin', ap.dataEntryWaiveMin, 'Appearance: ยกรอบเมื่อตรวจ Data Entry ภายใน ±');
 
         if (!ap.checklist.length) errors.push('Appearance: ต้องมีหัวข้อตรวจอย่างน้อย 1 ข้อ');
         if (ap.checklist.length > 20) errors.push('Appearance: หัวข้อตรวจได้สูงสุด 20 ข้อ');
@@ -106,6 +109,7 @@ const InspectionSettings = {
         if (Array.isArray(ap.checklist) && ap.checklist.length) APPEARANCE_DEFAULTS.CHECKLIST = [...ap.checklist];
         APPEARANCE_DEFAULTS.PHOTO_MAX_AGE_SEC = Number(ap.photoMaxAgeSec) || d.appearance.photoMaxAgeSec;
         APPEARANCE_DEFAULTS.SOON_MIN = Number(ap.soonMin) >= 0 ? Number(ap.soonMin) : d.appearance.soonMin;
+        APPEARANCE_DEFAULTS.DATA_ENTRY_WAIVE_MIN = Number(ap.dataEntryWaiveMin) >= 0 ? Number(ap.dataEntryWaiveMin) : d.appearance.dataEntryWaiveMin;
         APPEARANCE_PHOTO_SLOTS.forEach(slot => {
             const conf = ap.photoSlots?.[slot.key];
             if (!conf) return;
@@ -300,6 +304,7 @@ class InspectionSettingsEditor {
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             ${this._numField('set-ap-age', 'อายุรูปสูงสุด (กันใช้รูปเก่า)', ap.photoMaxAgeSec, 'วินาที', '')}
                             ${this._numField('set-ap-soon', 'แจ้ง "ใกล้ถึงรอบ" ก่อน', ap.soonMin, 'นาที', '')}
+                            ${this._numField('set-ap-waive', 'ยกรอบเมื่อตรวจ Data Entry ใกล้เวลากำหนด ±', ap.dataEntryWaiveMin, 'นาที', 'ตรวจ Data Entry ใกล้เวลากำหนดภายในช่วงนี้ = ไม่ต้องตรวจ Appearance รอบนั้น · 0 = ปิด')}
                         </div>
                     </section>
 
@@ -396,7 +401,8 @@ class InspectionSettingsEditor {
                 checklist: [...document.querySelectorAll('[data-checklist-input]')].map(el => el.value.trim()).filter(Boolean),
                 photoSlots,
                 photoMaxAgeSec: int('set-ap-age'),
-                soonMin: int('set-ap-soon')
+                soonMin: int('set-ap-soon'),
+                dataEntryWaiveMin: int('set-ap-waive')
             }
         };
     }
@@ -425,6 +431,7 @@ class InspectionSettingsEditor {
         });
         cmp('Appearance อายุรูปสูงสุด (วินาที)', b.appearance.photoMaxAgeSec, a.appearance.photoMaxAgeSec);
         cmp('Appearance แจ้งใกล้ถึงรอบ (นาที)', b.appearance.soonMin, a.appearance.soonMin);
+        cmp('Appearance ยกรอบเมื่อตรวจ Data Entry ± (นาที)', b.appearance.dataEntryWaiveMin, a.appearance.dataEntryWaiveMin);
         return lines;
     }
 

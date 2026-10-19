@@ -495,7 +495,8 @@ const InspectionSettings = {
     "appearance.intervalMin": [15, 720],
     "appearance.partIntervalMin": [15, 720],
     "appearance.photoMaxAgeSec": [30, 1800],
-    "appearance.soonMin": [0, 60]
+    "appearance.soonMin": [0, 60],
+    "appearance.dataEntryWaiveMin": [0, 60]
   },
 
   _num(path, value) {
@@ -562,7 +563,9 @@ const InspectionSettings = {
         checklist: checklist,
         photoSlots: photoSlots,
         photoMaxAgeSec: this._num("appearance.photoMaxAgeSec", ap.photoMaxAgeSec),
-        soonMin: this._num("appearance.soonMin", ap.soonMin)
+        soonMin: this._num("appearance.soonMin", ap.soonMin),
+        // ค่าใหม่ — หน้าเว็บเวอร์ชันเก่าไม่ได้ส่งมา ใช้ค่าเริ่มต้น 15 นาที
+        dataEntryWaiveMin: ap.dataEntryWaiveMin == null ? 15 : this._num("appearance.dataEntryWaiveMin", ap.dataEntryWaiveMin)
       }
     };
   },
