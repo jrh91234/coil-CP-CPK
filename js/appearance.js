@@ -1,6 +1,7 @@
 // =====================================================
 // APPEARANCE INSPECTION (ตรวจสภาพภายนอก)
 // ตรวจบิดงอ/เสียรูป, รอยขีดข่วน ฯลฯ ตามรอบเวลา + บังคับแนบรูป (เก็บใน Google Drive)
+// ถ้ามีรอบตรวจ Data Entry (ครบทุก Item) ภายใน ±15 นาที (ตั้งได้จากเมนูตั้งค่า) จากเวลากำหนด → ยกรอบ Appearance นั้นให้ (นับรอบถัดไปจากเวลาตรวจ Data Entry)
 // แยกจาก PART_SPECS / Cp-Cpk ทั้งหมด เพื่อไม่ให้กระทบการคำนวณเดิม
 // =====================================================
 
@@ -14,6 +15,7 @@ const APPEARANCE_DEFAULTS = {
     PHOTO_MAX_AGE_SEC: 120,   // รูปต้องเพิ่งถ่าย (กันเอารูปเก่าในเครื่องมาใช้)
     PHOTO_HASH_KEEP: 300,     // จำลายนิ้วมือรูปที่เคยส่งไว้กี่รูป (กันส่งรูปเดิมซ้ำ)
     SOON_MIN: 10,             // เหลือน้อยกว่านี้ (นาที) = ใกล้ถึงรอบ
+    DATA_ENTRY_WAIVE_MIN: 15, // (0 = ปิด) มีรอบตรวจ Data Entry ภายใน ±นี้ (นาที) จากกำหนด = ยกรอบ Appearance นั้นให้
     RENDER_TICK_MS: 30 * 1000,
     SERVER_POLL_MS: 3 * 60 * 1000,
     HISTORY_PAGE: 12
@@ -358,6 +360,41 @@ class AppearanceModule {
         return APPEARANCE_DEFAULTS.PART_INTERVAL_MIN[part] || this.intervalMin;
     }
 
+    // ยกรอบให้เมื่อมีการตรวจ Data Entry ใกล้เวลากำหนด (±DATA_ENTRY_WAIVE_MIN) — นับเหมือนตรวจ Appearance ตอนเริ่มตรวจ Data Entry
+    // from = จุดเริ่มนับ · apTimes = เวลาตรวจ Appearance หลัง from · deStarts = เวลาเริ่มรอบตรวจ Data Entry
+    // คืนค่า: เวลาตรวจที่นับได้ทั้งหมด (เรียงเวลา) โดยรายการที่มาจาก Data Entry มี waived: true
+    _effectiveChecks(from, apTimes, deStarts, intervalMin) {
+        const tol = APPEARANCE_DEFAULTS.DATA_ENTRY_WAIVE_MIN * 60000;
+        const ap = [...apTimes].sort((a, b) => a - b);
+        const de = [...deStarts].sort((a, b) => a - b);
+        const out = [];
+        for (let i = 0; i < 200; i++) {
+            const due = WorkTime.addWorkMinutes(from, intervalMin);
+            const nextAp = ap.find(t => t > from);
+            const waiver = tol > 0 ? de.find(t => t > from && Math.abs(t - due) <= tol) : undefined; // 0 = ปิด
+            if (waiver !== undefined && (nextAp === undefined || waiver < nextAp)) {
+                out.push({ ts: waiver, waived: true, due });
+                from = waiver;
+            } else if (nextAp !== undefined) {
+                out.push({ ts: nextAp, waived: false });
+                from = nextAp;
+            } else {
+                break;
+            }
+        }
+        return out;
+    }
+
+    // เวลาเริ่มรอบตรวจ Data Entry ของเครื่องในวันนี้ (ตรวจครบทุก Item หรือกำลังตรวจอยู่)
+    _dataEntryStarts(machine, now) {
+        const schedule = this.controller?.schedule;
+        if (!schedule || typeof InspectionPlanner === 'undefined') return [];
+        const gap = INSPECTION_RULES.SESSION_GAP_MIN * 60000;
+        return InspectionPlanner.buildSessions(schedule._records().filter(r => r.machine === machine))
+            .filter(s => s.start <= now && (s.complete || now - s.end <= gap))
+            .map(s => s.start);
+    }
+
     _machineStatus(machine, now = Date.now()) {
         const last = this.lastByMachine[machine] || null;
         const seg = WorkTime.currentSegment(now);
@@ -369,11 +406,16 @@ class AppearanceModule {
         }
 
         // นับจากการตรวจครั้งล่าสุด หรือจากเวลาเริ่มกะ ถ้ายังไม่ได้ตรวจในกะนี้
+        const intervalMin = this._intervalFor(this.controller.machineAssignments?.[machine]);
         const checkedThisShift = last && last.ts >= seg.anchor;
-        const from = checkedThisShift ? last.ts : seg.anchor;
+        let from = checkedThisShift ? last.ts : seg.anchor;
+        // รอบที่ตรวจ Data Entry ใกล้เวลากำหนด → ยกรอบ Appearance นั้นให้ แล้วนับรอบถัดไปจากเวลานั้น
+        const waivers = this._effectiveChecks(from, [], this._dataEntryStarts(machine, now), intervalMin);
+        const waived = waivers.length ? waivers[waivers.length - 1] : null;
+        if (waived) from = waived.ts;
         const elapsedMin = WorkTime.workMinutes(from, now);
-        const remainMin = this._intervalFor(this.controller.machineAssignments?.[machine]) - elapsedMin;
-        const base = { last, checkedThisShift, from, elapsedMin, remainMin, brk };
+        const remainMin = intervalMin - elapsedMin;
+        const base = { last, checkedThisShift, from, elapsedMin, remainMin, brk, waived };
         if (remainMin < 0) return { level: 'overdue', ...base };
         if (remainMin <= APPEARANCE_DEFAULTS.SOON_MIN) return { level: 'soon', ...base };
         return { level: 'ok', ...base };
@@ -450,7 +492,13 @@ class AppearanceModule {
                 main = s.level === 'overdue'
                     ? `เลยกำหนด ${this._formatDuration(-s.remainMin)}`
                     : `อีก ${this._formatDuration(s.remainMin)}`;
-                sub = s.checkedThisShift ? lastText : `ยังไม่ได้ตรวจกะนี้ (นับจาก ${this._formatTime(s.from)} น.)`;
+                sub = s.waived
+                    ? `ยกรอบ ${this._formatTime(s.waived.due)} น. (ตรวจ Data Entry ${this._formatTime(s.waived.ts)} น.)`
+                    : s.checkedThisShift ? lastText : `ยังไม่ได้ตรวจกะนี้ (นับจาก ${this._formatTime(s.from)} น.)`;
+                if (s.level === 'overdue' && -s.remainMin <= APPEARANCE_DEFAULTS.DATA_ENTRY_WAIVE_MIN) {
+                    const waiveBy = WorkTime.addWorkMinutes(s.from, this._intervalFor(this.controller.machineAssignments?.[s.machine]) + APPEARANCE_DEFAULTS.DATA_ENTRY_WAIVE_MIN);
+                    sub += ` · หรือตรวจ Data Entry ภายใน ${this._formatTime(waiveBy)} น. แทนได้`;
+                }
             }
             if (s.brk && s.level !== 'idle') sub = `⏸ พัก ถึง ${this._formatTime(s.brk[1])} น. · ` + sub;
             const lastFail = s.last && s.last.result === 'FAIL'
@@ -908,14 +956,29 @@ class AppearanceModule {
             const seg = WorkTime.segments(dayStart).find(sg => r.ts >= sg.window[0] && r.ts < sg.window[1]);
             if (!seg) return;
             const key = `${r.machine}|${dayStart}|${seg.kind}`;
-            if (!groups[key]) groups[key] = { seg, times: [], intervalMin: this._intervalFor(r.part) };
+            if (!groups[key]) groups[key] = { seg, machine: r.machine, times: [], intervalMin: this._intervalFor(r.part) };
             groups[key].times.push(r.ts);
         });
+        // รอบตรวจ Data Entry ในช่วงวันที่เดียวกัน — ใช้ยกรอบ Appearance ที่ตรวจ Data Entry ใกล้เวลากำหนด
+        const deStartsByMachine = {};
+        const deStarts = (machine) => {
+            if (!deStartsByMachine[machine]) {
+                const recs = (this.controller?.allRecords || [])
+                    .filter(r => r.machine === machine)
+                    .map(r => ({ ...r, ts: StatUtils.parseThaiDateTime(r.timestamp)?.getTime() }))
+                    .filter(r => r.ts);
+                deStartsByMachine[machine] = typeof InspectionPlanner === 'undefined' ? []
+                    : InspectionPlanner.buildSessions(recs).filter(s => s.complete).map(s => s.start);
+            }
+            return deStartsByMachine[machine];
+        };
         let expected = 0, covered = 0;
-        Object.values(groups).forEach(({ seg, times, intervalMin }) => {
+        Object.values(groups).forEach(({ seg, machine, times, intervalMin }) => {
             const [start, end] = seg.count;
             const slots = Math.max(1, Math.ceil(WorkTime.workMinutes(start, Math.min(now, end)) / intervalMin));
-            const hit = new Set(times.map(t =>
+            const de = deStarts(machine).filter(t => t >= seg.window[0] && t < seg.window[1]);
+            const checks = this._effectiveChecks(seg.window[0] - 1, times, de, intervalMin).map(c => c.ts);
+            const hit = new Set(checks.map(t =>
                 Math.min(slots - 1, Math.floor(WorkTime.workMinutes(start, Math.max(t, start)) / intervalMin))));
             expected += slots;
             covered += hit.size;
