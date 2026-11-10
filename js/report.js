@@ -49,7 +49,8 @@ class PdfReportModule {
         this._setBusy(true);
         try {
             await this._loadLib();
-            const el = this._buildReport(ctx);
+            const partImage = await this._getPartImage(ctx.part);
+            const el = this._buildReport(ctx, partImage);
             const fileName = this._fileName(ctx);
             // รอรูปกราฟโหลดครบก่อน ไม่งั้นความสูงหน้าถูกวัดผิด (หน้าหลังหาย/กราฟถูกตัด)
             await Promise.all([...el.querySelectorAll('img')].map(img => img.decode().catch(() => {})));
@@ -66,6 +67,34 @@ class PdfReportModule {
             alert('สร้าง PDF ไม่สำเร็จ: ' + (err.message || err));
         } finally {
             this._setBusy(false);
+        }
+    }
+
+    // รูปตำแหน่งวัดของรุ่นชิ้นงาน (รูปเดียวกับแผง "ตำแหน่งวัด" บน Dashboard)
+    // ยังไม่ได้โหลด → ดึงจาก cache/cloud ก่อน; ถ้าเป็น URL ให้แปลงเป็น data URL กันภาพหายตอนสร้าง PDF
+    async _getPartImage(part) {
+        if (!part || typeof ITEM_IMAGES === 'undefined') return null;
+        const ui = this.app.ui;
+        let src = ITEM_IMAGES[part];
+        if (!src && ui?._ensureImageLoaded) {
+            try {
+                await ui._ensureImageLoaded(part);
+                if (ui._imageFetches?.[part]) await ui._imageFetches[part];
+            } catch { /* ไม่มีรูปก็สร้างรายงานต่อได้ */ }
+            src = ITEM_IMAGES[part];
+        }
+        if (!src) return null;
+        if (String(src).startsWith('data:')) return src;
+        try {
+            const blob = await (await fetch(src)).blob();
+            return await new Promise(resolve => {
+                const fr = new FileReader();
+                fr.onload = () => resolve(fr.result);
+                fr.onerror = () => resolve(src);
+                fr.readAsDataURL(blob);
+            });
+        } catch {
+            return src;
         }
     }
 
@@ -184,7 +213,7 @@ class PdfReportModule {
         }
     }
 
-    _buildReport(ctx) {
+    _buildReport(ctx, partImage = null) {
         const specs = PART_SPECS[ctx.part];
         const ui = this.app.ui;
         const records = ctx.records.filter(r => r.part === ctx.part);
@@ -250,7 +279,11 @@ class PdfReportModule {
         // จับคู่ทีละ 2 กราฟเป็น 1 แถว (block) — ตัดหน้าได้เฉพาะระหว่างแถว ไม่ผ่ากลางกราฟ
         const chartRows = [];
         for (let i = 0; i < chartCards.length; i += 2) {
-            chartRows.push(`<div class="rpt-chart-row rpt-avoid">${chartCards[i]}${chartCards[i + 1] || '<div class="rpt-chart rpt-empty"></div>'}</div>`);
+            const row = `<div class="rpt-chart-row">${chartCards[i]}${chartCards[i + 1] || '<div class="rpt-chart rpt-empty"></div>'}</div>`;
+            // หัวข้อผูกกับแถวแรก — ไม่ให้หัวข้อค้างท้ายหน้าแล้วกราฟไปขึ้นหน้าใหม่
+            chartRows.push(i === 0
+                ? `<div class="rpt-avoid"><h2>แนวโน้มค่าที่วัดได้รายตัว (Trend Charts)</h2>${row}</div>`
+                : `<div class="rpt-avoid">${row}</div>`);
         }
 
         // ---- รายการค่าที่หลุดสเปค ----
@@ -277,7 +310,7 @@ class PdfReportModule {
         el.className = 'rpt-root';
         el.innerHTML = `
             <style>
-                .rpt-root { width: 720px; padding: 4px; font-family: 'Sarabun', sans-serif; color: #1f2937; font-size: 11px; background: #fff; }
+                .rpt-root { width: 720px; padding: 4px 4px 0; font-family: 'Sarabun', sans-serif; color: #1f2937; font-size: 11px; background: #fff; }
                 .rpt-root h1 { font-size: 20px; margin: 0; color: #1e3a8a; }
                 .rpt-root h2 { font-size: 13px; margin: 0 0 6px; color: #1f2937; border-left: 4px solid #3b82f6; padding-left: 6px; }
                 .rpt-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1e3a8a; padding-bottom: 6px; margin-bottom: 10px; }
@@ -299,6 +332,8 @@ class PdfReportModule {
                 .rpt-bad { background: #fee2e2; color: #991b1b; } .rpt-na { background: #f3f4f6; color: #6b7280; }
                 .rpt-bad-text { color: #dc2626; font-weight: 600; }
                 .rpt-muted { color: #9ca3af; }
+                .rpt-partimg { border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px; text-align: center; background: #fff; }
+                .rpt-partimg img { max-width: 100%; max-height: 270px; object-fit: contain; }
                 .rpt-hist { width: 100%; border: 1px solid #e5e7eb; border-radius: 6px; }
                 .rpt-chart-row { display: flex; gap: 8px; margin-bottom: 8px; }
                 .rpt-chart { flex: 1 1 0; min-width: 0; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px; }
@@ -308,7 +343,7 @@ class PdfReportModule {
                 .rpt-chart-head span { color: #6b7280; font-size: 10px; }
                 .rpt-chart-mode { color: #2563eb; font-size: 9.5px; margin-bottom: 2px; }
                 .rpt-legend { color: #6b7280; font-size: 9.5px; margin-top: 4px; }
-                .rpt-footer { margin-top: 10px; color: #9ca3af; font-size: 9.5px; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 4px; }
+                .rpt-footer { margin: 10px 0 0; color: #9ca3af; font-size: 9.5px; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 4px; }
             </style>
             <div class="rpt-header">
                 <div>
@@ -323,6 +358,10 @@ class PdfReportModule {
                 <div><span>ช่วงวันที่</span><b>${e(this._rangeText(ctx))}</b></div>
                 <div><span>จำนวนข้อมูลทั้งหมด</span><b>${records.length} ค่า</b></div>
             </div>
+            ${partImage ? `<div class="rpt-section rpt-avoid">
+                <h2>ตำแหน่งวัด (Dimension Point Check) — ${e(ctx.part)}</h2>
+                <div class="rpt-partimg"><img src="${partImage}"></div>
+            </div>` : ''}
             <div class="rpt-section rpt-avoid">
                 <h2>สรุปความสามารถของกระบวนการ (Capability Summary)</h2>
                 <table class="rpt-table">
@@ -334,7 +373,6 @@ class PdfReportModule {
             </div>
             ${histHtml}
             <div class="rpt-section">
-                <h2>แนวโน้มค่าที่วัดได้รายตัว (Trend Charts)</h2>
                 <div class="rpt-charts">${chartRows.join('')}</div>
                 <div class="rpt-legend">จุดสีน้ำเงิน = ปกติ · สีส้ม = หลังเปลี่ยนม้วน · สีม่วง = หลังตั้งเครื่อง(เอาท์สเปค) · เส้นประแดง = USL/LSL</div>
             </div>
