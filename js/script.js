@@ -536,6 +536,13 @@ const sigmaZonePlugin = {
 // 4. VIEW (UI Management)
 // -----------------------------------------------------
 class DashboardUI {
+    // รวมค่าที่บันทึกในครั้งเดียวกันเป็น 1 จุด (ค่าเฉลี่ย) — จำค่าที่ผู้ใช้เลือกไว้ในเครื่อง
+    static groupRounds = (() => {
+        try { return localStorage.getItem('cpk_group_rounds') !== '0'; } catch { return true; }
+    })();
+    // ระยะห่างสูงสุดระหว่างค่าที่ติดกันในรอบวัดเดียวกัน (วินาที)
+    static ROUND_GAP_SEC = 120;
+
     static _setupTypeColor(type) {
         if (type === 'roll_change') return 'rgb(234, 88, 12)';
         if (type === 'out_of_spec') return 'rgb(147, 51, 234)';
@@ -586,6 +593,17 @@ class DashboardUI {
             e.target.value = '';
             this._compressAndUploadImage(this._currentItemKey, file);
         });
+
+        // สวิตช์ "เฉลี่ยต่อรอบวัด": รวมค่าที่บันทึกพร้อมกันในครั้งเดียว (เช่น 3 ชิ้น) เป็น 1 จุดบนกราฟ
+        const roundsToggle = document.getElementById('group-rounds-toggle');
+        if (roundsToggle) {
+            roundsToggle.checked = DashboardUI.groupRounds;
+            roundsToggle.addEventListener('change', () => {
+                DashboardUI.groupRounds = roundsToggle.checked;
+                try { localStorage.setItem('cpk_group_rounds', roundsToggle.checked ? '1' : '0'); } catch {}
+                this._rerenderNumericCharts();
+            });
+        }
 
         document.addEventListener('click', (e) => {
             if (e.target.closest('#inline-delete-btn')) {
@@ -1710,7 +1728,25 @@ class DashboardUI {
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    // จุดที่เป็นค่าเฉลี่ยของรอบวัด → แสดงจำนวนชิ้นและค่ารายชิ้นด้วย
+                                    afterLabel: (item) => {
+                                        if (item.datasetIndex !== 0) return '';
+                                        const vals = this.chartInstances[key]?._pointDetails?.[item.dataIndex];
+                                        if (!vals) return '';
+                                        const range = Math.max(...vals) - Math.min(...vals);
+                                        return [
+                                            `เฉลี่ยจาก ${vals.length} ชิ้น`,
+                                            `รายชิ้น: ${vals.map(v => v.toFixed(3)).join(', ')}`,
+                                            `Range (R): ${range.toFixed(3)}`
+                                        ];
+                                    }
+                                }
+                            }
+                        },
                         scales: {
                             x: { ticks: { display: true, maxRotation: 45 } }
                         },
@@ -1765,7 +1801,8 @@ class DashboardUI {
                 }
             } else {
                 // Numeric: smart daily-vs-individual aggregation
-                const { labels, values, setupTypes } = DashboardUI._buildNumericChartData(paramRecords);
+                const { labels, values, setupTypes, details } = DashboardUI._buildNumericChartData(paramRecords);
+                chart._pointDetails = details || [];
                 const uslData = Array(labels.length).fill(spec.usl);
                 const lslData = spec.lsl !== null ? Array(labels.length).fill(spec.lsl) : [];
 
@@ -1821,15 +1858,13 @@ class DashboardUI {
 
         // สร้าง time-series สำหรับวันที่คลิก
         const dayRecords = grouped[clickedISO];
-        const rawLabels = dayRecords.map(r => {
-            const parts = String(r.timestamp).replace(',', '').trim().split(' ');
-            return (parts[1] || '').substring(0, 5);
-        });
-        const rawValues = dayRecords.map(r => parseFloat(r.value));
-        const rawSetupTypes = dayRecords.map(r => r.setupType || '');
-        const labels = rawLabels.length === 1 ? ['', ...rawLabels] : rawLabels;
-        const values = rawValues.length === 1 ? [null, ...rawValues] : rawValues;
-        const setupTypes = rawSetupTypes.length === 1 ? ['', ...rawSetupTypes] : rawSetupTypes;
+        const pts = DashboardUI._buildTimePoints(dayRecords);
+        const rawLabels = pts.labels;
+        const single = rawLabels.length === 1;
+        const labels = single ? ['', ...rawLabels] : rawLabels;
+        const values = single ? [null, ...pts.values] : pts.values;
+        const setupTypes = single ? ['', ...pts.setupTypes] : pts.setupTypes;
+        chart._pointDetails = single ? [null, ...pts.details] : pts.details;
 
         // หา shift และ slots สำหรับวันที่คลิก
         const shift = this._getShift(rawLabels.find(t => /^\d{2}:\d{2}$/.test(t)));
@@ -1917,7 +1952,8 @@ class DashboardUI {
     _resetChartDrillDown(key) {
         const chart = this.chartInstances[key];
         if (!chart) return;
-        const { labels, values, setupTypes } = DashboardUI._buildNumericChartData(chart._allRecords || []);
+        const { labels, values, setupTypes, details } = DashboardUI._buildNumericChartData(chart._allRecords || []);
+        chart._pointDetails = details || [];
         const spec = chart._spec;
         chart.data.labels = labels;
         chart.data.datasets[0].data = values;
@@ -1943,6 +1979,55 @@ class DashboardUI {
         if (types.includes('out_of_spec')) return 'out_of_spec';
         if (types.includes('roll_change')) return 'roll_change';
         return '';
+    }
+
+    // จัดกลุ่ม "รอบวัด": ค่าที่กดบันทึกในครั้งเดียวกัน (เช่น 3 ชิ้น) ถูกบันทึกเป็นหลายแถวที่เวลาใกล้กันมาก
+    // → รวมแถวติดกันที่ machine/operator/ประเภทการบันทึกเดียวกัน และห่างกันไม่เกิน ROUND_GAP_SEC เป็น 1 รอบ
+    static _groupMeasurementRounds(records) {
+        const gapMs = DashboardUI.ROUND_GAP_SEC * 1000;
+        const rounds = [];
+        let cur = null;
+        let prevDt = null;
+        records.forEach(r => {
+            const v = parseFloat(r.value);
+            const dt = StatUtils.parseThaiDateTime(r.timestamp);
+            const machine = r.machine || '';
+            const operator = r.operator || '';
+            const setupType = r.setupType || '';
+            const sameRound = cur && dt && prevDt
+                && Math.abs(dt - prevDt) <= gapMs
+                && cur.machine === machine && cur.operator === operator && cur.setupType === setupType;
+            if (!sameRound) {
+                cur = { timestamp: r.timestamp, machine, operator, setupType, values: [] };
+                rounds.push(cur);
+            }
+            if (!isNaN(v)) cur.values.push(v);
+            if (dt) prevDt = dt;
+        });
+        return rounds
+            .filter(g => g.values.length > 0)
+            .map(g => ({ ...g, value: parseFloat(StatUtils.mean(g.values).toFixed(3)) }));
+    }
+
+    // แปลง records ของวันเดียว → จุดบนกราฟ (รายชิ้น หรือ เฉลี่ยต่อรอบ ตามสวิตช์)
+    // details[i] = ค่ารายชิ้นของจุดนั้น (ใช้แสดงใน tooltip) หรือ null ถ้าเป็นจุดเดี่ยว
+    static _buildTimePoints(records) {
+        const points = DashboardUI.groupRounds
+            ? DashboardUI._groupMeasurementRounds(records)
+            : records.map(r => ({ timestamp: r.timestamp, value: parseFloat(r.value), setupType: r.setupType || '', values: null }));
+        return {
+            labels: points.map(p => (String(p.timestamp).replace(',', '').trim().split(' ')[1] || String(p.timestamp)).substring(0, 5)),
+            values: points.map(p => p.value),
+            setupTypes: points.map(p => p.setupType || ''),
+            details: points.map(p => (p.values && p.values.length > 1) ? p.values : null)
+        };
+    }
+
+    // วาดกราฟ numeric ทุกตัวใหม่จาก records เดิม (ใช้ตอนสลับโหมดรายชิ้น/เฉลี่ยต่อรอบ)
+    _rerenderNumericCharts() {
+        for (const [key, chart] of Object.entries(this.chartInstances)) {
+            if (chart && chart._spec && chart.config.type === 'line') this._resetChartDrillDown(key);
+        }
     }
 
     static _buildNumericChartData(records) {
@@ -1987,19 +2072,17 @@ class DashboardUI {
             }
             return { labels, values, setupTypes };
         } else {
-            // รายครั้ง: แสดง HH:MM พร้อมข้อมูลล่าสุด 30 จุด
-            const displayRecords = records.slice(-30);
-            const labels = displayRecords.map(r => {
-                const timePart = String(r.timestamp).replace(',', '').trim().split(' ')[1] || r.timestamp;
-                return timePart.substring(0, 5); // HH:MM
-            });
-            const values = displayRecords.map(r => parseFloat(r.value));
-            const setupTypes = displayRecords.map(r => r.setupType || '');
+            // รายครั้ง/รายรอบ: แสดง HH:MM พร้อมข้อมูลล่าสุด 30 จุด
+            const pts = DashboardUI._buildTimePoints(records);
+            const labels = pts.labels.slice(-30);
+            const values = pts.values.slice(-30);
+            const setupTypes = pts.setupTypes.slice(-30);
+            const details = pts.details.slice(-30);
 
-            if (displayRecords.length === 1) {
-                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values], setupTypes: ['', ...setupTypes] };
+            if (labels.length === 1) {
+                return { labels: ['เริ่มต้น', ...labels], values: [null, ...values], setupTypes: ['', ...setupTypes], details: [null, ...details] };
             }
-            return { labels, values, setupTypes };
+            return { labels, values, setupTypes, details };
         }
     }
 
