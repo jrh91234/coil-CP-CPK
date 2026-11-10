@@ -2382,6 +2382,10 @@ class AppController {
             this.appearance = new AppearanceModule(this);
             this.appearance.init(masterData);
         }
+        // Export รายงาน PDF — module แยกใน js/report.js
+        if (typeof PdfReportModule !== 'undefined') {
+            this.report = new PdfReportModule(this);
+        }
         // รอบการตรวจวัด — module แยกใน js/schedule.js
         if (typeof InspectionScheduleModule !== 'undefined') {
             this.schedule = new InspectionScheduleModule(this);
@@ -3089,6 +3093,8 @@ class AppController {
         // กรองตามเครื่องจักรและช่วงวันที่
         const machineRecords = machine ? allRecords.filter(r => r.machine === machine) : allRecords;
         const dateFilteredRecords = this._filterByDateRange(machineRecords);
+        // ข้อมูลชุดที่แสดงอยู่ — ใช้สร้างรายงาน PDF (js/report.js)
+        this.lastReportContext = { machine, part, param, range, records: dateFilteredRecords };
 
         this.ui.updateAllCharts(dateFilteredRecords, part, PART_SPECS[part]);
 
