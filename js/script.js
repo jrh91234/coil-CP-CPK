@@ -1840,9 +1840,10 @@ class DashboardUI {
     }
 
     // Drill-down: คลิกจุดข้อมูลในมุมมองหลายวัน → ซูมเข้าแสดงรายเวลาของวันนั้น
-    _handleNumericChartClick(key, elements) {
+    // forcedISO: วาดวันเดิมซ้ำ (เช่น ตอนสลับโหมดรายชิ้น/เฉลี่ยต่อรอบ) โดยไม่ต้องคลิก
+    _handleNumericChartClick(key, elements, forcedISO = null) {
         const chart = this.chartInstances[key];
-        if (!chart || !chart._isMultiDay || chart._isDrilling) return;
+        if (!chart || !chart._isMultiDay || (chart._isDrilling && !forcedISO)) return;
 
         // สร้าง grouped map วันผลิต (08:00-07:59) → records[]
         const grouped = {};
@@ -1853,8 +1854,9 @@ class DashboardUI {
             grouped[iso].push(r);
         });
         const sortedDays = Object.keys(grouped).sort();
-        const clickedISO = sortedDays[elements[0].index];
-        if (!clickedISO) return;
+        const clickedISO = forcedISO || sortedDays[elements?.[0]?.index];
+        if (!clickedISO || !grouped[clickedISO]) return;
+        chart._drillISO = clickedISO;
 
         // สร้าง time-series สำหรับวันที่คลิก
         const dayRecords = grouped[clickedISO];
@@ -2026,7 +2028,10 @@ class DashboardUI {
     // วาดกราฟ numeric ทุกตัวใหม่จาก records เดิม (ใช้ตอนสลับโหมดรายชิ้น/เฉลี่ยต่อรอบ)
     _rerenderNumericCharts() {
         for (const [key, chart] of Object.entries(this.chartInstances)) {
-            if (chart && chart._spec && chart.config.type === 'line') this._resetChartDrillDown(key);
+            if (!chart || !chart._spec || chart.config.type !== 'line') continue;
+            // กราฟที่ซูมเข้าวันใดวันหนึ่งอยู่ → คงอยู่ในวันนั้น แค่วาดจุดใหม่
+            if (chart._isDrilling && chart._drillISO) this._handleNumericChartClick(key, null, chart._drillISO);
+            else this._resetChartDrillDown(key);
         }
     }
 
