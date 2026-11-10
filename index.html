@@ -260,7 +260,13 @@
 
             <div class="flex items-center justify-between border-b pb-2">
                 <h2 class="text-xl font-bold text-gray-800">ภาพรวมคุณภาพ (Quality Overview)</h2>
-                <span id="overview-part-title" class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold"></span>
+                <div class="flex items-center gap-2">
+                    <span id="overview-part-title" class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold"></span>
+                    <button type="button" id="export-pdf-btn" class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors" title="ดาวน์โหลดรายงาน SPC (ตามเครื่อง รุ่นชิ้นงาน และช่วงวันที่ที่เลือกอยู่) เป็นไฟล์ PDF">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M6 20h12a2 2 0 002-2V8l-6-6H6a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                        <span class="export-pdf-label">Export PDF</span>
+                    </button>
+                </div>
             </div>
 
             <!-- Date Range Filter -->
@@ -347,5 +353,6 @@
     <script src="js/appearance.js"></script>
     <script src="js/schedule.js"></script>
     <script src="js/settings.js"></script>
+    <script src="js/report.js"></script>
 </body>
 </html>
