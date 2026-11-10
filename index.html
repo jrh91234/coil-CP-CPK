@@ -263,18 +263,6 @@
                 <span id="overview-part-title" class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold"></span>
             </div>
 
-            <!-- Point color legend -->
-            <div class="flex items-center gap-3 text-xs text-gray-500 bg-white px-3 py-2 rounded-lg border flex-wrap">
-                <span class="font-medium text-gray-600 shrink-0">สัญลักษณ์จุด:</span>
-                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500"></span>ปกติ</span>
-                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-orange-500"></span>หลังเปลี่ยนม้วน</span>
-                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-purple-600"></span>หลังตั้งเครื่อง(เอาท์สเปค)</span>
-                <label class="ml-auto flex items-center gap-1.5 cursor-pointer select-none text-gray-600 font-medium" title="ค่าที่บันทึกพร้อมกันในครั้งเดียว (เช่น 3 ชิ้น) จะแสดงเป็น 1 จุด = ค่าเฉลี่ย">
-                    <input type="checkbox" id="group-rounds-toggle" class="w-3.5 h-3.5 accent-blue-600" checked>
-                    เฉลี่ยต่อรอบวัด (1 ครั้ง = 1 จุด)
-                </label>
-            </div>
-
             <!-- Date Range Filter -->
             <div class="bg-white p-3 rounded-xl shadow-sm border flex flex-wrap items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -335,6 +323,17 @@
                 </div>
             </div>
 
+            <!-- Point color legend (อยู่ติดเหนือกราฟรายตัว) -->
+            <div class="flex items-center gap-3 text-xs text-gray-500 bg-white px-3 py-2 rounded-lg border flex-wrap">
+                <span class="font-medium text-gray-600 shrink-0">สัญลักษณ์จุด:</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500"></span>ปกติ</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-orange-500"></span>หลังเปลี่ยนม้วน</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full bg-purple-600"></span>หลังตั้งเครื่อง(เอาท์สเปค)</span>
+                <label class="ml-auto flex items-center gap-1.5 cursor-pointer select-none text-gray-600 font-medium" title="ค่าที่บันทึกพร้อมกันในครั้งเดียว (เช่น 3 ชิ้น) จะแสดงเป็น 1 จุด = ค่าเฉลี่ย">
+                    <input type="checkbox" id="group-rounds-toggle" class="w-3.5 h-3.5 accent-blue-600" checked>
+                    เฉลี่ยต่อรอบวัด (1 ครั้ง = 1 จุด)
+                </label>
+            </div>
             <!-- คอนเทนเนอร์สำหรับรองรับ "หลายกราฟ" -->
             <div id="charts-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- กราฟแต่ละตัวจะถูกสร้างอัตโนมัติด้วย JavaScript ตรงนี้ -->
