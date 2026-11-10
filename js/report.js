@@ -161,6 +161,101 @@ class PdfReportModule {
         return spec.type === 'gauge' ? 'Gauge (ผ่าน/ไม่ผ่าน)' : parts.join(' / ');
     }
 
+    // วาด Chart.js config ลง canvas นอกจอ แล้วคืนเป็น data URL (พื้นขาว)
+    _renderConfig(config, width, height, extraProps = {}) {
+        const holder = document.createElement('div');
+        holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:${height}px;`;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        holder.appendChild(canvas);
+        document.body.appendChild(holder);
+        let chart = null;
+        try {
+            config.options = {
+                ...(config.options || {}),
+                responsive: false, maintainAspectRatio: false, animation: false, devicePixelRatio: 3, events: []
+            };
+            chart = new Chart(canvas, config);
+            Object.assign(chart, extraProps);
+            chart.draw();
+            const c2d = canvas.getContext('2d');
+            c2d.save();
+            c2d.globalCompositeOperation = 'destination-over';
+            c2d.fillStyle = '#ffffff';
+            c2d.fillRect(0, 0, canvas.width, canvas.height);
+            c2d.restore();
+            return canvas.toDataURL('image/png');
+        } catch (err) {
+            console.warn('render chart for report failed:', err);
+            return null;
+        } finally {
+            chart?.destroy();
+            holder.remove();
+        }
+    }
+
+    // Histogram + Normal Curve ของ 1 Item — คำนวณ bin/เส้นโค้งแบบเดียวกับกราฟบน Dashboard
+    _histogramImage(spec, values, width, height) {
+        const n = values.length;
+        const mean = StatUtils.mean(values);
+        const sigma = StatUtils.stdDev(values, mean);
+        const dataMin = Math.min(...values);
+        const dataMax = Math.max(...values);
+        const dataRange = dataMax - dataMin || 1;
+        const binCount = Math.max(Math.ceil(1 + 3.322 * Math.log10(n)), Math.min(50, Math.round(dataRange / 0.01)));
+        const binWidth = dataRange / binCount;
+        const bins = new Array(binCount).fill(0);
+        values.forEach(v => {
+            let idx = Math.floor((v - dataMin) / binWidth);
+            if (idx >= binCount) idx = binCount - 1;
+            if (idx < 0) idx = 0;
+            bins[idx]++;
+        });
+        const histData = bins.map((count, i) => ({ x: dataMin + (i + 0.5) * binWidth, y: count }));
+
+        let minVal = dataMin, maxVal = dataMax;
+        if (spec.lsl !== null && spec.lsl !== undefined) minVal = Math.min(minVal, spec.lsl);
+        if (spec.usl !== null && spec.usl !== undefined) maxVal = Math.max(maxVal, spec.usl);
+        minVal = Math.min(minVal, mean - 3.5 * sigma);
+        maxVal = Math.max(maxVal, mean + 3.5 * sigma);
+        const pad = (maxVal - minVal) * 0.03;
+        minVal -= pad; maxVal += pad;
+
+        const curveData = [];
+        let maxCurveY = 0;
+        for (let i = 0; i <= 100; i++) {
+            const x = minVal + i * (maxVal - minVal) / 100;
+            const y = sigma > 0 ? (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / sigma, 2)) * n * binWidth : 0;
+            curveData.push({ x, y });
+            if (y > maxCurveY) maxCurveY = y;
+        }
+        const maxY = Math.max(Math.max(...bins, 0), maxCurveY) * 1.15;
+        const vline = (x, color, dash) => ({
+            type: 'line', data: (x === null || x === undefined) ? [] : [{ x, y: 0 }, { x, y: maxY }],
+            borderColor: color, borderDash: dash, borderWidth: 1.5, pointRadius: 0
+        });
+
+        return this._renderConfig({
+            data: {
+                datasets: [
+                    { type: 'bar', data: histData, backgroundColor: 'rgba(59, 130, 246, 0.6)', borderColor: 'rgb(59, 130, 246)', borderWidth: 1, barPercentage: 1.0, categoryPercentage: 1.0 },
+                    { type: 'line', data: curveData, borderColor: 'rgb(168, 85, 247)', borderWidth: 2, pointRadius: 0, fill: true, backgroundColor: 'rgba(168, 85, 247, 0.15)', tension: 0.4 },
+                    vline(spec.lsl, 'rgb(239, 68, 68)', [5, 5]),
+                    vline(spec.usl, 'rgb(239, 68, 68)', [5, 5]),
+                    vline(spec.target, 'rgb(34, 197, 94)', [3, 3])
+                ]
+            },
+            options: {
+                scales: {
+                    x: { type: 'linear', min: minVal, max: maxVal, ticks: { maxTicksLimit: 7, font: { size: 10 }, callback: v => Number(v).toFixed(2) } },
+                    y: { beginAtZero: true, suggestedMax: maxY, ticks: { precision: 0, font: { size: 10 } } }
+                },
+                plugins: { legend: { display: false }, tooltip: { enabled: false } }
+            }
+        }, width, height);
+    }
+
     // วาดกราฟซ้ำบน canvas ขนาดเท่าที่จะแสดงในรายงาน (ตัวอักษรอ่านได้ ไม่แบนตามขนาดจอ)
     // ใช้ data/options ชุดเดียวกับกราฟบนหน้าจอ → ได้มุมมองเดียวกัน (เฉลี่ยต่อรอบ / ซูมรายวัน ฯลฯ)
     _chartImage(chart, width, height) {
@@ -245,17 +340,36 @@ class PdfReportModule {
                 <td class="c"><span class="rpt-badge ${badge.cls}">${badge.text}</span></td></tr>`;
         }).join('');
 
-        // ---- Histogram ของ Item ที่เลือก ----
-        let histHtml = '';
-        const selSpec = ctx.param ? specs[ctx.param] : null;
-        const histImg = selSpec ? this._chartImage(ui.bellChartInstance, 700, 250) : null;
-        if (histImg) {
-            const title = selSpec.type === 'gauge' ? 'ประวัติการตรวจสอบ Gauge (P-Chart)' : 'การกระจายตัว (Histogram & Normal Curve)';
-            histHtml = `<div class="rpt-section rpt-avoid">
-                <h2>${e(title)} — ${e(selSpec.name)}</h2>
-                <img src="${histImg}" class="rpt-hist">
+        // ---- Histogram ทุก Item (numeric) — 2 กราฟต่อแถว ----
+        const histCards = Object.entries(specs).filter(([, spec]) => spec.type !== 'gauge').map(([key, spec]) => {
+            const vals = records.filter(r => r.parameter === key).map(r => parseFloat(r.value)).filter(v => !isNaN(v));
+            const label = spec.name.split(':')[0];
+            const dim = (spec.name.split(':')[1] || '').trim();
+            const img = vals.length >= 2 ? this._histogramImage(spec, vals, 336, 190) : null;
+            let statLine = '';
+            if (vals.length >= 2) {
+                const m = StatUtils.mean(vals);
+                const sd = StatUtils.stdDev(vals, m);
+                const cap = StatUtils.calculateCapability(vals, spec.usl, spec.lsl);
+                statLine = `n=${vals.length} · x̄=${m.toFixed(3)} · σ=${sd.toFixed(3)} · Cpk=${cap.cpk}`;
+            }
+            return `<div class="rpt-chart">
+                <div class="rpt-chart-head"><b>${e(label)}</b><span>${e(dim)}</span></div>
+                <div class="rpt-chart-mode">${e(statLine || 'ข้อมูลไม่พอ (ต้องมีอย่างน้อย 2 ค่า)')}</div>
+                ${img ? `<img src="${img}">` : '<div class="rpt-noimg">—</div>'}
             </div>`;
+        });
+        const histRows = [];
+        for (let i = 0; i < histCards.length; i += 2) {
+            const row = `<div class="rpt-chart-row">${histCards[i]}${histCards[i + 1] || '<div class="rpt-chart rpt-empty"></div>'}</div>`;
+            histRows.push(i === 0
+                ? `<div class="rpt-avoid"><h2>การกระจายตัวรายตัว (Histogram &amp; Normal Curve)</h2>${row}</div>`
+                : `<div class="rpt-avoid">${row}</div>`);
         }
+        const histHtml = histRows.length ? `<div class="rpt-section">
+                ${histRows.join('')}
+                <div class="rpt-legend">แท่งสีน้ำเงิน = ความถี่ · เส้นม่วง = ระฆังคว่ำ (Normal Curve) · เส้นประแดง = LSL/USL · เส้นประเขียว = Target</div>
+            </div>` : '';
 
         // ---- กราฟแนวโน้มทุก Item ----
         const chartCards = Object.entries(specs).map(([key, spec]) => {
@@ -334,7 +448,7 @@ class PdfReportModule {
                 .rpt-muted { color: #9ca3af; }
                 .rpt-partimg { border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px; text-align: center; background: #fff; }
                 .rpt-partimg img { max-width: 100%; max-height: 270px; object-fit: contain; }
-                .rpt-hist { width: 100%; border: 1px solid #e5e7eb; border-radius: 6px; }
+                .rpt-noimg { height: 120px; display: flex; align-items: center; justify-content: center; color: #d1d5db; font-size: 20px; }
                 .rpt-chart-row { display: flex; gap: 8px; margin-bottom: 8px; }
                 .rpt-chart { flex: 1 1 0; min-width: 0; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px; }
                 .rpt-empty { border-color: transparent; }
