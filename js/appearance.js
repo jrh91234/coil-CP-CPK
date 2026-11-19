@@ -21,8 +21,15 @@ const APPEARANCE_DEFAULTS = {
 
 // ---------- รูปที่ต้องถ่าย (บังคับครบทุกช่องที่ใช้กับรุ่นนั้น เรียงตามลำดับนี้) ----------
 // onlyParts = ใช้เฉพาะรุ่นที่ระบุ (ไม่ใส่/ว่าง = ทุกรุ่น) · enabled: false = ปิดช่องนี้ (ตั้งจากเมนูตั้งค่า)
+// ช่องที่ 1: ตั้งแต่ 20/11/2026 08:00 เปลี่ยนจาก "ชิ้นงานเดี่ยว" → "ใส่ Pin Gauge" (คง key 'Single' ไว้ เพื่อไม่กระทบค่าตั้งค่า/backend)
+const APPEARANCE_PIN_GAUGE_FROM = new Date(2026, 10, 20, 8, 0, 0).getTime(); // เดือนนับจาก 0 → 10 = พ.ย.
+const _slot1 = (before, after) => () => (Date.now() >= APPEARANCE_PIN_GAUGE_FROM ? after : before);
+const _slot1Label = _slot1('ชิ้นงานเดี่ยว', 'ใส่ Pin Gauge');
+const _slot1Hint = _slot1('ถ่ายชิ้นงานเดี่ยว ๆ ให้เห็นผิวงานว่าไม่มีรอย', 'ถ่ายตอนชิ้นงานใส่อยู่ใน Pin Gauge (ตามรูปตัวอย่าง)');
+const _slot1Example = _slot1('images/appearance-example-single.jpg', 'images/appearance-example-pingauge.jpg');
+
 const APPEARANCE_PHOTO_SLOTS = [
-    { key: 'Single',   label: 'ชิ้นงานเดี่ยว',          hint: 'ถ่ายชิ้นงานเดี่ยว ๆ ให้เห็นผิวงานว่าไม่มีรอย', example: 'images/appearance-example-single.jpg' },
+    { key: 'Single',   get label() { return _slot1Label(); }, get hint() { return _slot1Hint(); }, get example() { return _slot1Example(); } },
     { key: 'GoNoGo',   label: 'ใส่ Jig Go/NoGo Gauge', hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig Go/NoGo Gauge',   example: 'images/appearance-example-gonogo.jpg' },
     { key: 'Flatness', label: 'ใส่ Jig ระนาบ',          hint: 'ถ่ายตอนชิ้นงานใส่อยู่ใน Jig ระนาบ',           example: 'images/appearance-example-flatness.jpg',
       onlyParts: ['51207080HC-JR (25/32A)'] } // Jig ระนาบมีเฉพาะรุ่น 25/32A
@@ -234,6 +241,11 @@ class AppearanceModule {
         this._updateFormValidity();
 
         setInterval(() => this._renderStatus(), APPEARANCE_DEFAULTS.RENDER_TICK_MS);
+        // ถึงเวลาเปลี่ยนรูปช่องที่ 1 (Pin Gauge) ระหว่างเปิดหน้าค้างไว้ → วาดช่องรูปใหม่
+        const switchIn = APPEARANCE_PIN_GAUGE_FROM - Date.now();
+        if (switchIn > 0 && switchIn < 7 * 24 * 3600000) {
+            setTimeout(() => { this._renderPhotos(); this._updateFormValidity(); }, switchIn + 1000);
+        }
         setInterval(() => {
             if (document.visibilityState === 'visible') this.reload(true);
         }, APPEARANCE_DEFAULTS.SERVER_POLL_MS);
